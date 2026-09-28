@@ -1,0 +1,43 @@
+{
+  "version": "0.1.0",
+  "notes": "初始版本。发布新版本时由 CI 生成并上传到 Release，替换本文件的 url / signature。",
+  "pub_date": "2026-09-09T00:00:00.000Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64-setup.exe"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64-setup.exe"
+    },
+    "darwin-aarch64": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_aarch64.dmg"
+    },
+    "darwin-aarch64-app": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_aarch64.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64.dmg"
+    },
+    "darwin-x86_64-app": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_amd64.AppImage.tar.gz"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_amd64.AppImage.tar.gz"
+    },
+    "linux-x86_64-deb": {
+      "signature": "<REPLACE_WITH_SIGNATURE>",
+      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_amd64.deb"
+    }
+  }
+}
