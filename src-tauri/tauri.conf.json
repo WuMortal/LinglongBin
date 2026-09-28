@@ -46,7 +46,7 @@
       "preload": ["sqlite:data.db", "sqlite:sys.db"]
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwNEIzOUNDNjZCRTE0RjUKUldUMUZMNW16RGxMNEN6TlpYdXRGdGVjejc0UllWc1V1c0M5cDdqWC9WT1llYWdaTE1DQWlwTFgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVEMDRDQUQwMDY1QzRENTAKUldSUVRWd0cwTW9FWGR3U0VFLy84MUE4RytBK1JvOXAyamhwMFdZbnEvNlU2MVpndG9QZ3RsTUkK",
       "endpoints": [
         "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/v0.0.0/latest.json"
       ]
