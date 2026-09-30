@@ -14,7 +14,8 @@
 import Database from '@tauri-apps/plugin-sql'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import type {
-  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput,
+  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
 } from './types'
@@ -121,7 +122,11 @@ create table if not exists stock_log (
   material_id   text        references materials(id) on delete cascade,
   type          text        not null check (type in ('in','out')),
   qty           integer     not null,
+  supplier_id   text        references suppliers(id) on delete set null,  -- 供应商（type=in 时记录）
   note          text,
+  status        text        default 'normal',                  -- normal = 有效 | void = 已撤销
+  void_reason   text,                                          -- 撤销原因
+  voided_at     text,                                          -- 撤销时间
   created_at    text        default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -275,6 +280,9 @@ create index if not exists idx_labeltpl_owner      on label_templates(owner, del
 // SQLite 不支持 DROP COLUMN（3.35+），materials 旧列保留不影响新逻辑
 const MIGRATE_COLUMNS: Array<{ table: string; column: string }> = [
   { table: 'stock_log', column: 'supplier_id' },
+  { table: 'stock_log', column: 'status' },
+  { table: 'stock_log', column: 'void_reason' },
+  { table: 'stock_log', column: 'voided_at' },
   { table: 'categories', column: 'deleted_at' },
   { table: 'suppliers', column: 'deleted_at' },
   { table: 'label_templates', column: 'cats' },
@@ -472,6 +480,7 @@ interface StockLogDbRow {
   id: string; owner: string; material_id: string | null
   type: 'in' | 'out'; qty: number; note: string | null; created_at: string
   supplier_id?: string | null; supplier_name?: string | null
+  status?: string | null; void_reason?: string | null; voided_at?: string | null
   comp_name?: string | null; comp_model?: string | null; comp_package?: string | null
 }
 
@@ -481,6 +490,9 @@ function mapStockLog(r: Record<string, unknown>): StockLog {
     id: row.id, owner: row.owner, material_id: row.material_id,
     type: row.type, qty: row.qty, note: row.note, created_at: row.created_at,
     supplier_id: row.supplier_id ?? null,
+    status: row.status === 'void' ? 'void' : 'normal',
+    void_reason: row.void_reason ?? null,
+    voided_at: row.voided_at ?? null,
     suppliers: row.supplier_name != null ? { name: row.supplier_name } : null,
     materials: row.comp_name != null
       ? { name: row.comp_name, model: row.comp_model ?? null, package: row.comp_package ?? null }
@@ -633,6 +645,8 @@ export class SqliteStore implements DataStore {
         }
         // 历史待采单补默认状态（增量补列不带默认值，需回填）
         await db.execute(`update purchase_orders set status = 'pending' where status is null or status = ''`)
+        // 历史出入库记录补默认状态（增量补列不带默认值，需回填为有效）
+        await db.execute(`update stock_log set status = 'normal' where status is null or status = ''`)
         // 迁移完成后再建索引（避免列缺失时建索引报错）
         try { await db.execute(INDEXES_SQL) } catch { /* 旧库兼容，忽略索引错误 */ }
         // 内置标签模板：清库 / 新装时自动写入（种子也在 script/sqlite/0001_init.sql，二者等价）
@@ -894,8 +908,8 @@ export class SqliteStore implements DataStore {
     // 初始库存 > 0 时写入一条入库流水（备注：初始入库）
     if ((payload.qty ?? 0) > 0) {
       await db.execute(
-        `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, created_at)
-         values (?, ?, ?, 'in', ?, null, ?, ?)`,
+        `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, status, created_at)
+         values (?, ?, ?, 'in', ?, null, ?, 'normal', ?)`,
         [uuid(), owner, id, payload.qty, '初始入库', now()],
       )
     }
@@ -1172,8 +1186,8 @@ export class SqliteStore implements DataStore {
     const owner = await this.getOwnerId()
     const id = uuid()
     await db.execute(
-      `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, status, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, 'normal', ?)`,
       [
         id, owner, input.material_id, input.type, input.qty,
         input.type === 'in' ? (input.supplier_id ?? null) : null,
@@ -1222,7 +1236,15 @@ export class SqliteStore implements DataStore {
     const conds: string[] = []
     const params: unknown[] = []
     if (opts.type) { conds.push('s.type = ?'); params.push(opts.type) }
-    if (opts.keyword && opts.keyword.trim()) { conds.push('c.name like ?'); params.push(`%${opts.keyword.trim()}%`) }
+    // 关键词：物料名称 + 备注（均在服务端模糊匹配）
+    if (opts.keyword && opts.keyword.trim()) {
+      conds.push('(c.name like ? or s.note like ?)')
+      const kw = `%${opts.keyword.trim()}%`
+      params.push(kw, kw)
+    }
+    if (opts.status) {
+      conds.push(opts.status === 'void' ? "s.status = 'void'" : "coalesce(s.status, 'normal') = 'normal'")
+    }
     if (opts.from) { conds.push('s.created_at >= ?'); params.push(opts.from) }
     if (opts.to) { conds.push('s.created_at <= ?'); params.push(opts.to) }
     const where = conds.length ? 'where ' + conds.join(' and ') : ''
@@ -1250,7 +1272,8 @@ export class SqliteStore implements DataStore {
       `select m.id, m.name, m.model, m.brand, m.package, m.part_no, m.qty, m.price,
               coalesce(s.last_log, m.created_at) as last_move
        from materials m
-       left join (select material_id, max(created_at) as last_log from stock_log group by material_id) s
+       left join (select material_id, max(created_at) as last_log from stock_log
+                   where coalesce(status, 'normal') <> 'void' group by material_id) s
          on s.material_id = m.id
        where m.deleted_at is null
        order by last_move asc`,
@@ -1277,13 +1300,14 @@ export class SqliteStore implements DataStore {
     const rows = await db.select<
       { material_id: string; total_in: number; total_out: number; last30_in: number; last30_out: number }[]
     >(
+      // 已撤销流水不计入汇总：库存已回滚，累计入库/出库须同步回退
       `select material_id,
               coalesce(sum(case when type = 'in' then qty else 0 end), 0) as total_in,
               coalesce(sum(case when type = 'out' then qty else 0 end), 0) as total_out,
               coalesce(sum(case when type = 'in' and created_at >= ? then qty else 0 end), 0) as last30_in,
               coalesce(sum(case when type = 'out' and created_at >= ? then qty else 0 end), 0) as last30_out
        from stock_log
-       where material_id is not null
+       where material_id is not null and coalesce(status, 'normal') <> 'void'
        group by material_id`,
       [since, since],
     )
@@ -1308,6 +1332,64 @@ export class SqliteStore implements DataStore {
       qty: input.qty, supplier_id: input.supplier_id ?? null, note: input.note,
     })
     return await this.updateMaterial(input.material_id, { qty: next })
+  }
+
+  /** 单条撤销的内部实现：校验状态 → 回滚库存 → 置为已撤销 */
+  private async voidOneStockLog(id: string, reason: string | null): Promise<void> {
+    const db = await this.ensure()
+    const rows = await db.select<Record<string, unknown>[]>('select * from stock_log where id = ?', [id])
+    if (!rows.length) throw new Error('记录不存在')
+    const log = mapStockLog(rows[0])
+    if (log.status === 'void') throw new Error('该记录已撤销，无法重复操作')
+
+    // 库存回滚：撤销入库 → 扣回数量；撤销出库 → 加回数量
+    if (log.material_id) {
+      const mats = await this.getMaterialsByIds([log.material_id])
+      if (mats.length) {
+        const cur = Number(mats[0].qty) || 0
+        if (log.type === 'in' && log.qty > cur)
+          throw new Error(`当前库存 ${cur} 不足，无法撤销本次入库 ${log.qty}`)
+        const next = log.type === 'in' ? cur - log.qty : cur + log.qty
+        await this.updateMaterial(log.material_id, { qty: next })
+      }
+    }
+
+    await db.execute(
+      `update stock_log set status = 'void', void_reason = ?, voided_at = ? where id = ?`,
+      [reason, now(), id],
+    )
+  }
+
+  async voidStockLog(input: VoidStockLogInput): Promise<StockLog> {
+    const db = await this.ensure()
+    await this.voidOneStockLog(input.id, input.reason?.trim() || null)
+    const fresh = await db.select<Record<string, unknown>[]>(
+      `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
+              sup.name as supplier_name
+       from stock_log s
+       left join materials c on c.id = s.material_id
+       left join suppliers sup on sup.id = s.supplier_id
+       where s.id = ?`,
+      [input.id],
+    )
+    return mapStockLog(fresh[0])
+  }
+
+  async voidStockLogs(input: VoidStockLogsInput): Promise<VoidStockLogsResult> {
+    const reason = input.reason?.trim() || null
+    let done = 0
+    const failedIds: string[] = []
+    const errors: string[] = []
+    for (const id of input.ids ?? []) {
+      try {
+        await this.voidOneStockLog(id, reason)
+        done++
+      } catch (e: unknown) {
+        failedIds.push(id)
+        errors.push((e as Error)?.message || '撤销失败')
+      }
+    }
+    return { done, failedIds, errors }
   }
 
   // ===== 库存盘点 =====
@@ -1812,7 +1894,9 @@ export class SqliteStore implements DataStore {
     const db = await this.ensure()
     const since = new Date(Date.now() - days * 86400000).toISOString()
     const rows = await db.select<{ type: 'in' | 'out'; qty: number; created_at: string }[]>(
-      'select type, qty, created_at from stock_log where created_at >= ?',
+      // 撤销的流水不进趋势（库存已回滚）
+      `select type, qty, created_at from stock_log
+       where created_at >= ? and coalesce(status, 'normal') <> 'void'`,
       [since],
     )
     const daysArr: TrendRow[] = []

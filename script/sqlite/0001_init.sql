@@ -85,7 +85,11 @@ create table if not exists stock_log (
   material_id   text        references materials(id) on delete cascade,
   type          text        not null check (type in ('in','out')),
   qty           integer     not null,
+  supplier_id   text        references suppliers(id) on delete set null,   -- 供应商（type=in 时记录）
   note          text,
+  status        text        default 'normal',                             -- normal = 有效 | void = 已撤销
+  void_reason   text,                                                     -- 撤销原因
+  voided_at     text,                                                     -- 撤销时间
   created_at    text        default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 

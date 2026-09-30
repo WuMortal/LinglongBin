@@ -30,8 +30,10 @@ export interface PageResult<T> {
 /** 出入库记录分页查询参数（筛选均在服务端完成） */
 export interface StockLogPageOpts {
   type?: 'in' | 'out'
-  /** 物料名关键词（模糊匹配 materials.name） */
+  /** 关键词（模糊匹配物料名称 materials.name 或备注 stock_log.note） */
   keyword?: string
+  /** 记录状态：normal = 有效 | void = 已撤销；不传 = 全部 */
+  status?: 'normal' | 'void'
   /** 起始时间（ISO 字符串，含当天 00:00） */
   from?: string
   /** 结束时间（ISO 字符串，含当天 23:59:59） */
@@ -60,6 +62,32 @@ export interface StockInput {
 /** 出入库并更新库存 */
 export interface ApplyStockInput extends StockInput {
   currentQty: number
+}
+
+/** 撤销出入库输入 */
+export interface VoidStockLogInput {
+  /** 流水 id */
+  id: string
+  /** 撤销原因（必填，便于追溯） */
+  reason: string
+}
+
+/** 批量撤销出入库输入 */
+export interface VoidStockLogsInput {
+  /** 流水 id 列表 */
+  ids: string[]
+  /** 撤销原因（批量共用一条） */
+  reason: string
+}
+
+/** 批量撤销结果：逐条执行，单条失败不影响其余 */
+export interface VoidStockLogsResult {
+  /** 成功撤销条数 */
+  done: number
+  /** 撤销失败的流水 id */
+  failedIds: string[]
+  /** 失败原因（与 failedIds 一一对应） */
+  errors: string[]
 }
 
 /** 图片上传结果 */
@@ -167,6 +195,10 @@ export interface DataStore {
   /** 出入库记录分页（筛选 + 总数，避免云端一次性拉全表） */
   listStockLogPage(opts?: StockLogPageOpts): Promise<PageResult<StockLog>>
   applyStock(input: ApplyStockInput): Promise<MaterialRow>
+  /** 撤销出入库：流水保留但置为已撤销，库存反向回滚 */
+  voidStockLog(input: VoidStockLogInput): Promise<StockLog>
+  /** 批量撤销出入库：共用一条原因，逐条撤销并回滚库存 */
+  voidStockLogs(input: VoidStockLogsInput): Promise<VoidStockLogsResult>
   /** 按物料聚合的出入库汇总（累计 + 近30天） */
   stockSummary(): Promise<StockSummaryRow[]>
 

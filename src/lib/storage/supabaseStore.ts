@@ -6,7 +6,8 @@ import type {
   LabelTemplate, StockTake, StockTakeItem, StagnantRow,
 } from '../types'
 import type {
-  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput,
+  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
 } from './types'
@@ -20,6 +21,15 @@ function mapLabelTemplate(r: LabelTemplate): LabelTemplate {
 /** 软删除时间戳（删除 = 写入 deleted_at，不物理删除） */
 function softDeleteAt(): string {
   return new Date().toISOString()
+}
+
+/**
+ * 报错是否源于「云端 stock_log 还没加撤销字段」（PGRST204 或 PostgreSQL 找不到列）。
+ * 用于老库的平滑降级：写入 / 汇总查询自动回退到不含 status 的字段集。
+ */
+function isMissingVoidColumn(msg?: string | null): boolean {
+  if (!msg) return false
+  return /PGRST204|does not exist|could not find the .*column/i.test(msg)
 }
 
 /** 把 Supabase 嵌套的 categories.parent.name 摊平为 categories.parent_name */
@@ -433,10 +443,14 @@ export class SupabaseStore implements DataStore {
 
   // ===== 出入库 =====
   async addStockLog(input: StockInput): Promise<StockLog> {
-    const payload = { ...input, owner: await this.getOwnerId() }
-    const { data, error } = await supabase.from('stock_log').insert(payload).select().single()
-    if (error) throw error
-    return data as StockLog
+    const base = { ...input, owner: await this.getOwnerId() }
+    // 云端未执行撤销字段迁移时降级写入（不阻断原有入库流程）
+    const tryInsert = async (payload: Record<string, unknown>) =>
+      supabase.from('stock_log').insert(payload).select().single()
+    let res = await tryInsert({ ...base, status: 'normal' })
+    if (res.error && isMissingVoidColumn(res.error.message)) res = await tryInsert(base)
+    if (res.error) throw res.error
+    return res.data as StockLog
   }
 
   async listStockLog(opts: { limit?: number; materialId?: string; type?: 'in' | 'out' } = {}): Promise<StockLog[]> {
@@ -454,29 +468,47 @@ export class SupabaseStore implements DataStore {
   }
 
   async listStockLogPage(opts: StockLogPageOpts = {}): Promise<PageResult<StockLog>> {
-    const { type, keyword = '', from, to, limit = 20, offset = 0 } = opts
-    const q = supabase
+    const { type, keyword = '', status, from, to, limit = 20, offset = 0 } = opts
+    let q = supabase
       .from('stock_log')
       .select('*, materials(name, model, package), suppliers(name)', { count: 'exact' })
       .order('created_at', { ascending: false })
-    if (type) q.eq('type', type)
-    if (keyword && keyword.trim()) q.ilike('materials.name', `%${keyword.trim()}%`)
-    if (from) q.gte('created_at', from)
-    if (to) q.lte('created_at', to)
+    if (type) q = q.eq('type', type)
+    if (from) q = q.gte('created_at', from)
+    if (to) q = q.lte('created_at', to)
+    // 关键词（物料名称 / 备注）与状态都走 or 复合表达式：
+    // PostgREST 只允许一个 or 参数，两组条件用 and(...) 交叉组合
+    const kw = keyword.trim()
+    const kwConds = kw ? [`materials.name.ilike.%${kw}%`, `note.ilike.%${kw}%`] : []
+    // 历史数据 status 为空 → 视为有效
+    const stConds = status === 'void'
+      ? ['status.eq.void']
+      : status === 'normal' ? ['status.is.null', 'status.eq.normal'] : []
+    const orExpr = kwConds.length && stConds.length
+      ? kwConds.flatMap(k => stConds.map(s => `and(${k},${s})`)).join(',')
+      : [...kwConds, ...stConds].join(',')
+    if (orExpr) q = q.or(orExpr)
     const { data, error, count } = await q.range(offset, offset + limit - 1)
     if (error) throw error
     return { rows: (data as StockLog[]) || [], total: count ?? 0 }
   }
 
   async stockSummary(): Promise<StockSummaryRow[]> {
-    const { data, error } = await supabase
+    // 已撤销流水不计入汇总（库存已回滚）；云端未加字段时降级为不带 status 的查询
+    let res = await supabase
       .from('stock_log')
-      .select('material_id, type, qty, created_at')
+      .select('material_id, type, qty, created_at, status')
       .not('material_id', 'is', null)
-    if (error) throw error
+    if (res.error && isMissingVoidColumn(res.error.message)) {
+      // 降级查询少了 status 列（此时也不可能有撤销记录），按同构处理
+      const fb = await supabase.from('stock_log').select('material_id, type, qty, created_at').not('material_id', 'is', null)
+      res = fb as unknown as typeof res
+    }
+    if (res.error) throw res.error
     const since = Date.now() - 30 * 86400000
     const map = new Map<string, StockSummaryRow>()
-    for (const r of (data as Array<{ material_id: string; type: 'in' | 'out'; qty: number; created_at: string }>) || []) {
+    for (const r of (res.data as Array<{ material_id: string; type: 'in' | 'out'; qty: number; created_at: string; status?: string | null }>) || []) {
+      if (r.status === 'void') continue
       const e = map.get(r.material_id) || { material_id: r.material_id, total_in: 0, total_out: 0, last30_in: 0, last30_out: 0 }
       const recent = new Date(r.created_at).getTime() >= since
       if (r.type === 'in') { e.total_in += r.qty; if (recent) e.last30_in += r.qty }
@@ -497,6 +529,66 @@ export class SupabaseStore implements DataStore {
       supplier_id: input.supplier_id ?? null, note: input.note,
     })
     return await this.updateMaterial(input.material_id, { qty: next })
+  }
+
+  /** 单条撤销的内部实现：校验状态 → 回滚库存 → 置为已撤销 */
+  private async voidOneStockLog(id: string, reason: string | null): Promise<void> {
+    const { data: row, error: e0 } = await supabase
+      .from('stock_log')
+      .select('*, materials(name, model, package), suppliers(name)')
+      .eq('id', id)
+      .maybeSingle()
+    if (e0) throw e0
+    if (!row) throw new Error('记录不存在')
+    const log = row as StockLog
+    if (log.status === 'void') throw new Error('该记录已撤销，无法重复操作')
+
+    // 库存回滚：撤销入库 → 扣回数量；撤销出库 → 加回数量
+    if (log.material_id) {
+      const mats = await this.getMaterialsByIds([log.material_id])
+      if (mats.length) {
+        const cur = Number(mats[0].qty) || 0
+        if (log.type === 'in' && log.qty > cur)
+          throw new Error(`当前库存 ${cur} 不足，无法撤销本次入库 ${log.qty}`)
+        await this.updateMaterial(log.material_id, {
+          qty: log.type === 'in' ? cur - log.qty : cur + log.qty,
+        })
+      }
+    }
+
+    const { error } = await supabase
+      .from('stock_log')
+      .update({ status: 'void', void_reason: reason, voided_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) throw error
+  }
+
+  async voidStockLog(input: VoidStockLogInput): Promise<StockLog> {
+    await this.voidOneStockLog(input.id, input.reason?.trim() || null)
+    const { data, error } = await supabase
+      .from('stock_log')
+      .select('*, materials(name, model, package), suppliers(name)')
+      .eq('id', input.id)
+      .single()
+    if (error) throw error
+    return data as StockLog
+  }
+
+  async voidStockLogs(input: VoidStockLogsInput): Promise<VoidStockLogsResult> {
+    const reason = input.reason?.trim() || null
+    let done = 0
+    const failedIds: string[] = []
+    const errors: string[] = []
+    for (const id of input.ids ?? []) {
+      try {
+        await this.voidOneStockLog(id, reason)
+        done++
+      } catch (e: unknown) {
+        failedIds.push(id)
+        errors.push((e as Error)?.message || '撤销失败')
+      }
+    }
+    return { done, failedIds, errors }
   }
 
   // ===== 库存盘点 =====
@@ -867,10 +959,18 @@ export class SupabaseStore implements DataStore {
 
   async stockTrend(days = 14): Promise<TrendRow[]> {
     const since = new Date(Date.now() - days * 86400000).toISOString()
-    const { data, error } = await supabase
+    // 撤销流水不进趋势；云端未加字段时不带 status 条件
+    let res = await supabase
       .from('stock_log')
-      .select('type, qty, created_at')
+      .select('type, qty, created_at, status')
       .gte('created_at', since)
+      .or('status.is.null,status.eq.normal')
+    if (res.error && isMissingVoidColumn(res.error.message)) {
+      // 同上：云端无 status 列时降级
+      const fb = await supabase.from('stock_log').select('type, qty, created_at').gte('created_at', since)
+      res = fb as unknown as typeof res
+    }
+    const { data, error } = res
     if (error) throw error
     const daysArr: TrendRow[] = []
     for (let i = days - 1; i >= 0; i--) {

@@ -338,12 +338,15 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
               </div>
               <div v-else-if="!logs.length" class="log-empty">暂无记录</div>
               <ul v-else class="log-list">
-                <li v-for="r in logs" :key="r.id" :class="r.type">
+                <li v-for="r in logs" :key="r.id" :class="[r.type, { 'is-void': r.status === 'void' }]">
                   <span class="tag">{{ r.type === 'in' ? '入' : '出' }}</span>
                   <div class="info">
                     <small class="who">{{ fmtTime(r.created_at) }}</small>
                     <small class="note" v-if="r.note || r.suppliers?.name">
                       {{ [r.suppliers?.name, r.note].filter(Boolean).join(' · ') }}
+                    </small>
+                    <small v-if="r.status === 'void'" class="note void-note">
+                      已撤销<template v-if="r.void_reason">：{{ r.void_reason }}</template>
                     </small>
                   </div>
                   <span class="q">{{ r.type === 'in' ? '+' : '-' }}{{ r.qty }}</span>
@@ -781,6 +784,23 @@ li.out .tag {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 已撤销记录：行弱化 + 数量划线 */
+.log-list li.is-void {
+  opacity: 0.6;
+}
+
+.log-list li.is-void .who,
+.log-list li.is-void .note,
+.log-list li.is-void .q {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.void-note {
+  color: var(--c-danger) !important;
+  text-decoration: none !important;
 }
 
 .q {

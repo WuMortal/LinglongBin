@@ -103,6 +103,12 @@ export interface StockLog {
   supplier_id: string | null
   note: string | null
   created_at: string
+  /** 记录状态：normal = 有效 | void = 已撤销（老数据为 null，按有效处理） */
+  status?: 'normal' | 'void' | null
+  /** 撤销原因 */
+  void_reason?: string | null
+  /** 撤销时间 */
+  voided_at?: string | null
   materials?: { name: string | null; model: string | null; package: string | null } | null
   suppliers?: { name: string | null } | null
 }

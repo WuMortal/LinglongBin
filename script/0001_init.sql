@@ -122,6 +122,9 @@ create table if not exists stock_log (
   qty           int         not null,
   supplier_id   uuid        references suppliers(id) on delete set null,           -- 供应商（type=in 时记录）
   note          text,
+  status        text        default 'normal',                                      -- normal = 有效 | void = 已撤销
+  void_reason   text,                                                              -- 撤销原因
+  voided_at     timestamptz,                                                       -- 撤销时间
   created_at    timestamptz default now()
 );
 

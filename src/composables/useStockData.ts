@@ -32,6 +32,11 @@ async function refreshLogs() {
   try { logs.value = await listStockLog({ limit: 500 }) } catch { /* 静默 */ }
 }
 
+/** 仅刷新出入库汇总（KPI 的近30天入/出），不重载物料与分类 */
+async function refreshSummary() {
+  try { summaryMap.value = new Map((await stockSummary()).map(s => [s.material_id, s])) } catch { /* 静默 */ }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -78,7 +83,7 @@ const catOptions = computed(() => {
 export function useStockData() {
   return {
     comps, categories, suppliers, suppliersLoaded, summaryMap, logs, loading,
-    sumOf, refreshLogs, load, refreshList, listLoading,
+    sumOf, refreshLogs, refreshSummary, load, refreshList, listLoading,
     totalQty, sum30, kpiItems, catOptions,
   }
 }

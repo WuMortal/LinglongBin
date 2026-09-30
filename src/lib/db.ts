@@ -10,7 +10,8 @@ import type {
   StockTake, StockTakeItem, StagnantRow,
 } from './types'
 import type {
-  ListMaterialsOpts, StockInput, ApplyStockInput,
+  ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
 } from './storage'
@@ -474,6 +475,8 @@ export const addStockLog = (input: StockInput): Promise<StockLog> => s.addStockL
 export const listStockLog = (opts?: { limit?: number; materialId?: string; type?: 'in' | 'out' }): Promise<StockLog[]> => s.listStockLog(opts)
 export const listStockLogPage = (opts?: StockLogPageOpts): Promise<PageResult<StockLog>> => s.listStockLogPage(opts)
 export const applyStock = (input: ApplyStockInput): Promise<MaterialRow> => s.applyStock(input)
+export const voidStockLog = (input: VoidStockLogInput): Promise<StockLog> => s.voidStockLog(input)
+export const voidStockLogs = (input: VoidStockLogsInput): Promise<VoidStockLogsResult> => s.voidStockLogs(input)
 export const stockSummary = (): Promise<StockSummaryRow[]> => s.stockSummary()
 
 export const createBomProject = (name: string): Promise<BomProject> => s.createBomProject(name)
