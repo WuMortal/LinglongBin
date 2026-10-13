@@ -191,7 +191,10 @@ async function loadLogs() {
     // 清掉已不在当前结果里的选中项（分页 / 筛选后残留）
     const ids = new Set(res.rows.map(r => r.id))
     selected.value = selected.value.filter(id => ids.has(id))
-  } catch { /* 静默 */ }
+  } catch (e: unknown) {
+    // 之前是静默失败，排查困难；这里显式提示（如云端 SQL / 字段未迁移导致的 400）
+    toast.error('查询失败：' + ((e as Error)?.message || e))
+  }
   finally { logLoading.value = false }
 }
 

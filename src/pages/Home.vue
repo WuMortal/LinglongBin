@@ -23,76 +23,94 @@
          以及各处的 void loadStats() 调用。
     <KpiCards :items="kpiItems" compact /> -->
 
-    <div class="toolbar">
-      <div class="search">
-        <Search :size="16" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
-        <input v-model="search" type="search" placeholder="搜索名称、型号、品牌、封装..." />
-      </div>
-      <AppSelect v-model="majorId" :options="majorOptions" :width="132" searchable search-placeholder="搜索大类"
-        placeholder="全部大类" class="cat" />
-      <AppSelect v-model="minorId" :options="minorOptions" :width="132" searchable search-placeholder="搜索小类"
-        placeholder="全部小类" class="cat" />
-      <!-- 参数筛选：未选小类时禁用；悬浮展开，点击可固定 -->
-      <div ref="paramAnchorEl" class="pf-anchor" @mouseenter="openParam" @mouseleave="closeParam">
-        <button class="param-btn" :class="{ on: paramVisible }" :disabled="!minorId"
-          :title="minorId ? '展开参数筛选' : '请先选择小类'" @click="toggleParamPin">
-          <Tag :size="13" style="display: inline-flex; flex-shrink: 0" />展开参数
-          <span v-if="selectedParamTags.length" class="pcnt">{{ selectedParamTags.length }}</span>
-        </button>
-        <div v-if="paramVisible" class="pf-pop-wrap">
-          <ParamFilterBar
-            v-if="activeCatParams.length"
-            :params="activeCatParams"
-            :model-value="paramSel"
-            :options-of="paramOptions"
-            :collapse="false"
-            @update:model-value="onParamsChange"
-            @clear="clearParams"
-          />
-          <p v-else class="pf-empty">该小类未配置参数模板</p>
+    <!-- 左右结构：左=分类树（带物料数量），右=筛选 + 物料卡片 -->
+    <div class="home-body">
+      <aside class="catpane">
+        <div class="pane-head">
+          <span class="pane-title">
+            <Tags :size="14" style="display: inline-flex" />分类
+          </span>
+          <span class="pane-count" :title="`物料总数 ${totalCount}`">{{ totalCount }}</span>
         </div>
-      </div>
-      <!-- 重置：清空搜索 / 分类 / 参数等全部筛选条件；无筛选时作为手动刷新 -->
-      <button class="reset-btn" :class="{ busy: loading }" :title="hasFilters ? '重置全部筛选' : '刷新'" @click="resetAll">
-        <RotateCcw :size="14" style="display: inline-flex; flex-shrink: 0" />
-      </button>
-    </div>
+        <CategoryTree :nodes="tree" :counts="catCountMap" :selected-id="catId" searchable @pick="pickCat">
+          <!-- 默认项：不限分类 -->
+          <template #top>
+            <div class="tn-all" :class="{ on: !catId }">
+              <span class="sp"></span>
+              <button class="nm" title="不限分类（默认）" @click="catId = null">全部</button>
+              <span class="ct" :title="`物料总数 ${totalCount}`">{{ totalCount }}</span>
+            </div>
+          </template>
+        </CategoryTree>
+      </aside>
 
-    <!-- 已选参数：小 tag，可单独移除 -->
-    <div v-if="selectedParamTags.length" class="param-tags">
-      <span v-for="t in selectedParamTags" :key="t.key" class="ptag">
-        <span class="pk">{{ t.name }}：</span><span class="pv">{{ t.value }}</span>
-        <button class="px" title="移除该条件" @click="removeParam(t.key)">
-          <X :size="10" style="display: inline-flex; flex-shrink: 0" />
-        </button>
-      </span>
-    </div>
+      <div class="matcol">
+        <div class="toolbar">
+          <div class="search">
+            <Search :size="16" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
+            <input v-model="search" type="search" placeholder="搜索名称、型号、品牌、封装..." />
+          </div>
+          <!-- 参数筛选：未选到小类时禁用；悬浮展开，点击可固定 -->
+          <div ref="paramAnchorEl" class="pf-anchor" @mouseenter="openParam" @mouseleave="closeParam">
+            <button class="param-btn" :class="{ on: paramVisible }" :disabled="!catIsLeaf"
+              :title="catIsLeaf ? '展开参数筛选' : '请先选择小类'" @click="toggleParamPin">
+              <Tag :size="13" style="display: inline-flex; flex-shrink: 0" />展开参数
+              <span v-if="selectedParamTags.length" class="pcnt">{{ selectedParamTags.length }}</span>
+            </button>
+            <div v-if="paramVisible" class="pf-pop-wrap">
+              <ParamFilterBar
+                v-if="activeCatParams.length"
+                :params="activeCatParams"
+                :model-value="paramSel"
+                :options-of="paramOptions"
+                :collapse="false"
+                @update:model-value="onParamsChange"
+                @clear="clearParams"
+              />
+              <p v-else class="pf-empty">该小类未配置参数模板</p>
+            </div>
+          </div>
+          <!-- 重置：清空搜索 / 分类 / 参数等全部筛选条件；无筛选时作为手动刷新 -->
+          <button class="reset-btn" :class="{ busy: loading }" :title="hasFilters ? '重置全部筛选' : '刷新'" @click="resetAll">
+            <RotateCcw :size="14" style="display: inline-flex; flex-shrink: 0" />
+          </button>
+        </div>
 
-    <!-- 批量操作条：进入多选模式后出现，贴着网格，作用于已选卡片 -->
-    <div v-if="selectMode" class="selbar">
-      <span class="sel-count">已选 {{ selectedCount }} 项</span>
-      <button class="sel-link" :disabled="!items.length" @click="toggleSelectAllLoaded">
-        {{ allLoadedSelected ? '取消全选' : `全选（已加载 ${items.length}）` }}
-      </button>
-      <button class="sel-link" :disabled="!selectedCount" @click="clearSelection">清空选择</button>
-      <span class="sel-spacer" />
-      <button class="btn btn-danger" :disabled="!selectedCount" @click="removeSelected">
-        <Trash2 :size="14" style="display: inline-flex; flex-shrink: 0" />删除所选
-      </button>
-      <button class="btn btn-ghost" @click="toggleSelectMode">退出</button>
-    </div>
+        <!-- 已选参数：小 tag，可单独移除 -->
+        <div v-if="selectedParamTags.length" class="param-tags">
+          <span v-for="t in selectedParamTags" :key="t.key" class="ptag">
+            <span class="pk">{{ t.name }}：</span><span class="pv">{{ t.value }}</span>
+            <button class="px" title="移除该条件" @click="removeParam(t.key)">
+              <X :size="10" style="display: inline-flex; flex-shrink: 0" />
+            </button>
+          </span>
+        </div>
 
-    <p v-if="error" class="error">{{ error }}</p>
-    <div v-if="loading" class="hint">
-      <div class="spinner-lg" />
-    </div>
-    <div v-else-if="!items.length" class="empty">
-      <div class="empty-ico">
-        <Box :size="40" style="display: inline-flex; flex-shrink: 0" />
-      </div>
-      <h3>还没有物料</h3>
-      <p>点击「添加物料」开始建档</p>
-    </div>
+        <!-- 批量操作条：进入多选模式后出现，贴着网格，作用于已选卡片 -->
+        <div v-if="selectMode" class="selbar">
+          <span class="sel-count">已选 {{ selectedCount }} 项</span>
+          <button class="sel-link" :disabled="!items.length" @click="toggleSelectAllLoaded">
+            {{ allLoadedSelected ? '取消全选' : `全选（已加载 ${items.length}）` }}
+          </button>
+          <button class="sel-link" :disabled="!selectedCount" @click="clearSelection">清空选择</button>
+          <span class="sel-spacer" />
+          <button class="btn btn-danger" :disabled="!selectedCount" @click="removeSelected">
+            <Trash2 :size="14" style="display: inline-flex; flex-shrink: 0" />删除所选
+          </button>
+          <button class="btn btn-ghost" @click="toggleSelectMode">退出</button>
+        </div>
+
+        <p v-if="error" class="error">{{ error }}</p>
+        <div v-if="loading" class="hint">
+          <div class="spinner-lg" />
+        </div>
+        <div v-else-if="!items.length" class="empty">
+          <div class="empty-ico">
+            <Box :size="40" style="display: inline-flex; flex-shrink: 0" />
+          </div>
+          <h3>还没有物料</h3>
+          <p>点击「添加物料」开始建档</p>
+        </div>
 
     <div v-else class="grid" ref="gridEl" :class="{ selecting: selectMode }" @scroll="onGridScroll">
       <article v-for="it in items" :key="it.id" class="item" :class="{ picked: selected.has(it.id) }"
@@ -144,6 +162,8 @@
         <span v-else class="hint-text">下拉加载更多</span>
       </div>
       <div v-else-if="items.length" class="load-end">没有更多了</div>
+        </div>
+      </div>
     </div>
 
     <!-- 物料详情抽屉 -->
@@ -218,8 +238,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, reactive } from 'vue'
-import { Plus, Inbox, Search, Box, Image as ImageIcon, Trash2, Pencil, ArrowLeftRight, ArrowUpFromDot, Tag, X, RotateCcw, Check } from 'lucide-vue-next'
-import { listMaterials, countMaterials, listCategories, deleteMaterial, deleteMaterials, applyStock, listSuppliers, imagePublicUrl, buildCategoryTree, descendantCategoryIds, listDictItems, getCategoryParams /* , statsOverview, lowStockMaterials —— 首页统计暂停用 */ } from '../lib/db'
+import {
+  Plus, Inbox, Search, Box, Image as ImageIcon, Trash2, Pencil, ArrowLeftRight, ArrowUpFromDot, Tag, X,
+  RotateCcw, Check, Tags,
+} from 'lucide-vue-next'
+import { listMaterials, countMaterials, countMaterialsByCategory, listCategories, deleteMaterial, deleteMaterials, applyStock, listSuppliers, imagePublicUrl, buildCategoryTree, descendantCategoryIds, listDictItems, getCategoryParams /* , statsOverview, lowStockMaterials —— 首页统计暂停用 */ } from '../lib/db'
 import type { Category, MaterialRow, SupplierRow, CategoryParam } from '../lib/types'
 import type { CategoryNode } from '../lib/db'
 import type { ListMaterialsOpts } from '../lib/storage'
@@ -231,6 +254,7 @@ import MaterialFormDialog from '../components/business/MaterialFormDialog.vue'
 import LcscPickerPanel from '../components/business/LcscPickerPanel.vue'
 import { lcscLookup, type LcscComponent, type LcscHit } from '../lib/lcscApi'
 import MaterialDetailDrawer from '../components/business/MaterialDetailDrawer.vue'
+import CategoryTree from '../components/business/CategoryTree.vue'
 import Segmented from '../components/form/Segmented.vue'
 // [首页统计暂停用]
 // import KpiCards from '../components/KpiCards.vue'
@@ -243,9 +267,8 @@ const toast = useToast()
 const items = ref<MaterialRow[]>([])
 const categories = ref<Category[]>([])
 const search = ref('')
-// 分类：拆成「大类 + 小类」两级联动（仅大类=含其下所有小类，选中小类=精确匹配）
-const majorId = ref<string | null>(null)
-const minorId = ref<string | null>(null)
+// 分类：树状单选（大类=含其下所有小类，小类=精确匹配）；null = 全部（默认）
+const catId = ref<string | null>(null)
 // 参数过滤（复用在 MaterialPickerPanel 的 ParamFilterBar）
 const activeCatParams = ref<CategoryParam[]>([])
 const paramSel = reactive<Record<string, string>>({})
@@ -294,32 +317,40 @@ const purposeOptions = computed(() => [
 
 const tree = ref<CategoryNode[]>([])
 
-/** 大类：一级分类（parent 为空） */
-const majorOptions = computed(() => [
-  { value: null as string | null, label: '全部大类' },
-  ...tree.value.map(n => ({ value: n.cat.id as string | null, label: n.cat.name })),
-])
-
-/**
- * 小类：未选大类时列出全部小类（按所属大类分组）；选中大类后只过滤出该大类下的小类。
- * 小类不依赖大类也能单独选（categoryScope 会按 categoryId 精确匹配）。
- */
-const minorOptions = computed(() => {
-  const rows: Array<{ value: string | null; label: string; group?: string }> = [{ value: null, label: '全部小类' }]
-  const node = tree.value.find(n => n.cat.id === majorId.value)
-  if (node) {
-    for (const c of node.children) rows.push({ value: c.cat.id as string | null, label: c.cat.name })
-    return rows
-  }
-  // 未选大类：全部小类都可选，用所属大类分组便于查找
+/** 当前选中的分类节点（含所属大类，用于按钮文案与筛选范围判断） */
+const selectedCat = computed<{ node: CategoryNode; parent: CategoryNode | null } | null>(() => {
+  if (!catId.value) return null
   for (const n of tree.value) {
-    for (const c of n.children) rows.push({ value: c.cat.id as string | null, label: c.cat.name, group: n.cat.name })
+    if (n.cat.id === catId.value) return { node: n, parent: null }
+    const kid = n.children.find(c => c.cat.id === catId.value)
+    if (kid) return { node: kid, parent: n }
   }
-  return rows
+  // 分类树尚未加载完时退化为「未知分类」，按精确匹配处理
+  return null
 })
 
-/** 生效分类：小类优先，其次大类（用于加载参数模板与可选值） */
-const effectiveCategoryId = computed(() => minorId.value || majorId.value)
+/** 参数模板按小类配置：只有选到无子级的分类才可用 */
+const catIsLeaf = computed(() => !!selectedCat.value && selectedCat.value.node.children.length === 0)
+
+/** 生效分类（用于加载参数模板与可选值） */
+const effectiveCategoryId = computed(() => catId.value)
+
+/* ===== 分类树筛选：样式参考「标签打印」的分类面板 ===== */
+const catSearch = ref('')
+/** 各分类下的物料数量（全库一次聚合，不随筛选变化） */
+const catCountMap = ref<Record<string, number>>({})
+
+/** 全部：整棵树的物料合计（徽标用） */
+const totalCount = computed(() => Object.values(catCountMap.value).reduce((s, n) => s + n, 0))
+
+async function loadCatCounts() {
+  try { catCountMap.value = await countMaterialsByCategory() } catch { /* 静默 */ }
+}
+
+/** 选中分类：null = 全部（默认） */
+function pickCat(node: CategoryNode) {
+  catId.value = node.cat.id
+}
 
 /* ===== [首页统计暂停用] 原 KPI 数据链路，与库存中心重复，待重新设计口径后再放开 =====
  * 全库统计：独立于下方列表，不受筛选条件与分页影响。
@@ -380,12 +411,6 @@ function scheduleLoad() {
 // 搜索 / 参数筛选变化 → 重新拉取
 watch(search, scheduleLoad)
 watch(paramSel, scheduleLoad, { deep: true })
-// 切换大类：已选小类若不属于该大类则清空，避免残留上一个大类的子类
-watch(majorId, (id) => {
-  if (!minorId.value) return
-  const node = tree.value.find(n => n.cat.id === id)
-  if (!node?.children.some(c => c.cat.id === minorId.value)) minorId.value = null
-})
 // 生效分类变化：重置参数筛选，并加载该分类的参数模板与可选值
 watch(effectiveCategoryId, async (id) => {
   for (const k of Object.keys(paramSel)) delete paramSel[k]
@@ -400,11 +425,12 @@ watch(effectiveCategoryId, async (id) => {
   scheduleLoad()
 })
 
-/** 当前分类筛选范围：选中小类=精确匹配，仅选大类=含其下所有小类 */
+/** 当前分类筛选范围：小类（无子级）= 精确匹配；大类 = 含其下所有小类；未选 = 全部 */
 function categoryScope(): Pick<ListMaterialsOpts, 'categoryId' | 'categoryIds'> {
-  if (minorId.value) return { categoryId: minorId.value }
-  if (majorId.value) return { categoryIds: descendantCategoryIds(categories.value, majorId.value) }
-  return {}
+  if (!catId.value) return {}
+  const sel = selectedCat.value
+  if (sel && sel.node.children.length) return { categoryIds: descendantCategoryIds(categories.value, catId.value) }
+  return { categoryId: catId.value }
 }
 
 function buildOpts() {
@@ -435,16 +461,16 @@ function clearParams() {
   for (const k of Object.keys(paramSel)) delete paramSel[k]
 }
 
-// ===== 参数面板：悬浮展开 + 点击固定（仅选中小类后可用） =====
+// ===== 参数面板：悬浮展开 + 点击固定（仅选到小类后可用） =====
 const paramAnchorEl = ref<HTMLElement | null>(null)
 const paramHover = ref(false)
 const paramPinned = ref(false)
-const paramVisible = computed(() => !!minorId.value && (paramHover.value || paramPinned.value))
+const paramVisible = computed(() => catIsLeaf.value && (paramHover.value || paramPinned.value))
 
-function openParam() { if (minorId.value) paramHover.value = true }
+function openParam() { if (catIsLeaf.value) paramHover.value = true }
 function closeParam() { paramHover.value = false }
 function toggleParamPin() {
-  if (!minorId.value) return
+  if (!catIsLeaf.value) return
   paramPinned.value = !paramPinned.value
   paramHover.value = paramPinned.value
 }
@@ -461,22 +487,21 @@ function removeParam(key: string) { delete paramSel[key] }
 
 /** 是否存在任一生效的筛选条件（控制重置按钮可用性） */
 const hasFilters = computed(() =>
-  !!search.value || !!majorId.value || !!minorId.value || Object.values(paramSel).some(Boolean),
+  !!search.value || !!catId.value || Object.values(paramSel).some(Boolean),
 )
 
-/** 重置：清空搜索、大类/小类与全部参数条件；没有条件可清时按刷新处理 */
+/** 重置：清空搜索、分类与全部参数条件；没有条件可清时按刷新处理 */
 function resetAll() {
   const had = hasFilters.value
   search.value = ''
-  majorId.value = null
-  minorId.value = null
+  catId.value = null
   for (const k of Object.keys(paramSel)) delete paramSel[k]
   closeParamAll()
   // 无条件可清时，watch 不会触发，需主动重拉一次
   if (!had) load()
 }
 
-function onDocClickParam(e: MouseEvent) {
+function onDocClick(e: MouseEvent) {
   if (!paramVisible.value) return
   const t = e.target as Node
   if (paramAnchorEl.value?.contains(t)) return
@@ -485,7 +510,9 @@ function onDocClickParam(e: MouseEvent) {
   if (pop && pop.contains(t)) return
   closeParamAll()
 }
-function onEscParam(e: KeyboardEvent) { if (e.key === 'Escape') closeParamAll() }
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeParamAll()
+}
 
 // ===== 批量删除：多选模式 =====
 const selectMode = ref(false)
@@ -526,6 +553,7 @@ async function removeSelected() {
     selectMode.value = false
     selected.value.clear()
     await load()
+    void loadCatCounts()
     // void loadStats() // [首页统计暂停用]
     toast.success(`已删除 ${ids.length} 个物料`)
   } catch (e: unknown) {
@@ -570,6 +598,7 @@ function onGridScroll(e: Event) {
 }
 async function loadCategories() {
   try { categories.value = await listCategories(); tree.value = buildCategoryTree(categories.value) } catch { /* ignore */ }
+  await loadCatCounts()
 }
 function openAdd() { editing.value = null; formLcsc.value = null; formLcscPrice.value = null; showAdd.value = true }
 function openEdit(it: MaterialRow) { editing.value = it; formLcsc.value = null; formLcscPrice.value = null; showAdd.value = true }
@@ -629,6 +658,7 @@ async function submitQuick() {
     q.purpose = null
     toast.success(q.type === 'in' ? `入库 +${qty}` : `出库 -${qty}`)
     quick.value = null
+    void loadCatCounts()
     // void loadStats() // [首页统计暂停用] 库存 / 低库存数变了
   }
   catch (e: unknown) { toast.error('操作失败：' + ((e as Error).message || e)) }
@@ -638,6 +668,7 @@ async function submitQuick() {
 /** 编辑保存后：刷新列表；若抽屉开着同步最新数据 */
 async function onSaved() {
   await load()
+  void loadCatCounts()
   // void loadStats() // [首页统计暂停用]
   if (detailing.value) {
     const fresh = items.value.find(i => i.id === detailing.value!.id)
@@ -656,6 +687,7 @@ async function remove(it: MaterialRow) {
     await deleteMaterial(it.id)
     if (detailing.value?.id === it.id) detailing.value = null
     await load()
+    void loadCatCounts()
     // void loadStats() // [首页统计暂停用]
     toast.success('删除成功')
   }
@@ -663,12 +695,12 @@ async function remove(it: MaterialRow) {
 }
 onMounted(() => {
   loadCategories(); load() // ; void loadStats() —— [首页统计暂停用]
-  document.addEventListener('click', onDocClickParam)
-  document.addEventListener('keydown', onEscParam)
+  document.addEventListener('click', onDocClick)
+  document.addEventListener('keydown', onEsc)
 })
 onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClickParam)
-  document.removeEventListener('keydown', onEscParam)
+  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('keydown', onEsc)
 })
 </script>
 
@@ -705,10 +737,137 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-/* 分类下拉固定宽度，不被搜索框挤压 */
-.cat {
+/* ===== 左右结构：左=分类树，右=物料 =====
+   注意：不能用 .body —— 卡片内容区已占用该类名（.item > .body），会串样式 */
+.home-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+
+/* 左：分类面板（与标签打印的 .pane 同款） */
+.catpane {
+  width: 186px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-xl);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  overflow: hidden;
+}
+
+.pane-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--c-border-hairline);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.pane-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane-count {
+  margin-left: auto;
+  padding: 0 7px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-2);
+  background: var(--c-surface);
+  border-radius: var(--r-pill);
+}
+
+/* 分类树顶部的「全部」行（与树内行样式对齐） */
+.tn-all {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  transition: background var(--motion);
+}
+
+.tn-all:hover {
+  background: var(--c-surface-hover);
+}
+
+.tn-all.on {
+  background: var(--c-primary-soft);
+}
+
+.tn-all.on .nm {
+  color: var(--c-primary);
+  font-weight: 600;
+}
+
+/* 与折叠箭头等宽的占位，保证和分类行对齐 */
+.tn-all .sp {
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
 }
+
+.tn-all .nm {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: var(--fs-sm);
+  padding: 2px 3px;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tn-all .nm:hover {
+  color: var(--c-primary);
+  background: var(--c-surface);
+}
+
+.tn-all .ct {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 7px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-2);
+  background: var(--c-surface);
+  border-radius: var(--r-pill);
+}
+
+/* 右：工具栏 + 卡片网格 */
+.matcol {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ===== 分类树已抽成公共组件 CategoryTree（样式随组件走） ===== */
 
 /* ===== 参数筛选按钮 + 悬浮面板 ===== */
 .pf-anchor {
@@ -1274,6 +1433,7 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
+/* 卡片内容区（.item > .body）：纵向排列名称 / 型号 / 参数 / 库存行 */
 .body {
   padding: 10px 12px;
   flex: 1;
@@ -1414,6 +1574,19 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   height: 100%;
+}
+
+/* 极窄窗口才改为上下堆叠；常规桌面窗口（minWidth 1000）始终保持左右结构 */
+@media (max-width: 760px) {
+  .home-body {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .catpane {
+    width: auto;
+    max-height: 220px;
+  }
 }
 
 </style>

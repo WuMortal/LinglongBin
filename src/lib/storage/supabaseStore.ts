@@ -32,6 +32,22 @@ function isMissingVoidColumn(msg?: string | null): boolean {
   return /PGRST204|does not exist|could not find the .*column/i.test(msg)
 }
 
+/**
+ * or() / in.() 里的值转义：逗号与括号是逻辑树的语法字符，
+ * 原样写入会被拆成多个条件（如型号 "BC847B,215" 会解析失败），故百分号转义。
+ * 注意 supabase-js 用 URLSearchParams 再编码一次，服务端解出来正好是 %2C。
+ */
+function escOrVal(v: string): string {
+  return v.replace(/,/g, '%2C').replace(/\(/g, '%28').replace(/\)/g, '%29')
+}
+
+/** 数组分批（避免单条 SQL / URL 过长） */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
 /** 把 Supabase 嵌套的 categories.parent.name 摊平为 categories.parent_name */
 function flattenCategory<T extends { categories?: { name: string | null; threshold?: number | null; parent?: { name: string | null } | null } | null }>(row: T): T {
   const c = row.categories
@@ -377,6 +393,25 @@ export class SupabaseStore implements DataStore {
     return (data as DictItem[]) || []
   }
 
+  async countMaterialsByCategory(): Promise<Record<string, number>> {
+    const out: Record<string, number> = {}
+    // 只取 category_id 一列；分页拉全量（兼容 Supabase 默认 1000 上限）
+    let off = 0
+    while (off < 50000) {
+      const { data, error } = await supabase
+        .from('materials')
+        .select('category_id')
+        .is('deleted_at', null)
+        .range(off, off + 999)
+      if (error) throw error
+      const rows = (data as { category_id: string | null }[]) || []
+      for (const r of rows) if (r.category_id) out[r.category_id] = (out[r.category_id] ?? 0) + 1
+      if (rows.length < 1000) break
+      off += 1000
+    }
+    return out
+  }
+
   async countDictItems(): Promise<Record<string, number>> {
     const { data, error } = await supabase.from('dict_items').select('dict_key')
     if (error) throw error
@@ -469,28 +504,48 @@ export class SupabaseStore implements DataStore {
 
   async listStockLogPage(opts: StockLogPageOpts = {}): Promise<PageResult<StockLog>> {
     const { type, keyword = '', status, from, to, limit = 20, offset = 0 } = opts
-    let q = supabase
-      .from('stock_log')
-      .select('*, materials(name, model, package), suppliers(name)', { count: 'exact' })
-      .order('created_at', { ascending: false })
-    if (type) q = q.eq('type', type)
-    if (from) q = q.gte('created_at', from)
-    if (to) q = q.lte('created_at', to)
-    // 关键词（物料名称 / 备注）与状态都走 or 复合表达式：
-    // PostgREST 只允许一个 or 参数，两组条件用 and(...) 交叉组合
+    /*
+     * 关键词命中「物料名称 或 备注」。
+     * PostgREST 不允许在 or() 里把嵌入资源（materials.name）与顶层列混用（会 400），
+     * 所以先按名称查出物料 id，再全部用顶层条件组装。
+     */
     const kw = keyword.trim()
-    const kwConds = kw ? [`materials.name.ilike.%${kw}%`, `note.ilike.%${kw}%`] : []
+    let matIds: string[] = []
+    if (kw) {
+      const { data: ms } = await supabase
+        .from('materials').select('id').ilike('name', `%${kw}%`).limit(1000)
+      matIds = ((ms || []) as { id: string }[]).map(m => m.id)
+    }
+    const kwConds = kw
+      ? [...(matIds.length ? [`material_id.in.(${matIds.join(',')})`] : []), `note.ilike.%${kw}%`]
+      : []
     // 历史数据 status 为空 → 视为有效
     const stConds = status === 'void'
       ? ['status.eq.void']
       : status === 'normal' ? ['status.is.null', 'status.eq.normal'] : []
+    // PostgREST 只有一个 or 参数：两组条件用 and(...) 交叉组合
     const orExpr = kwConds.length && stConds.length
       ? kwConds.flatMap(k => stConds.map(s => `and(${k},${s})`)).join(',')
       : [...kwConds, ...stConds].join(',')
-    if (orExpr) q = q.or(orExpr)
-    const { data, error, count } = await q.range(offset, offset + limit - 1)
-    if (error) throw error
-    return { rows: (data as StockLog[]) || [], total: count ?? 0 }
+
+    /** withStatus=false：云端还没加撤销字段时，去掉状态条件重试 */
+    const run = async (withStatus: boolean) => {
+      let q = supabase
+        .from('stock_log')
+        .select('*, materials(name, model, package), suppliers(name)', { count: 'exact' })
+        .order('created_at', { ascending: false })
+      if (type) q = q.eq('type', type)
+      if (from) q = q.gte('created_at', from)
+      if (to) q = q.lte('created_at', to)
+      const expr = withStatus ? orExpr : kwConds.join(',')
+      if (expr) q = q.or(expr)
+      return q.range(offset, offset + limit - 1)
+    }
+
+    let res = await run(true)
+    if (res.error && stConds.length && isMissingVoidColumn(res.error.message)) res = await run(false)
+    if (res.error) throw res.error
+    return { rows: (res.data as StockLog[]) || [], total: res.count ?? 0 }
   }
 
   async stockSummary(): Promise<StockSummaryRow[]> {
@@ -850,14 +905,48 @@ export class SupabaseStore implements DataStore {
   }
 
   async matchMaterialByModel(model: string): Promise<MaterialRow[]> {
+    const v = escOrVal(model ?? '')
     const { data, error } = await supabase
       .from('materials')
-      .select('id, name, model, brand, package, qty, image_path, alternates, categories(name)')
+      .select('id, name, model, brand, package, part_no, qty, image_path, alternates, categories(name)')
       .is('deleted_at', null)
-      .or(`model.ilike.%${model}%,part_no.ilike.%${model}%,name.ilike.%${model}%`)
+      .or(`model.ilike.%${v}%,part_no.ilike.%${v}%,name.ilike.%${v}%`)
       .limit(10)
     if (error) throw error
     return (data as unknown as MaterialRow[]) || []
+  }
+
+  /**
+   * 批量匹配：一次查回「任意关键词命中型号 / 商品编号 / 名称」的候选物料。
+   * 调用方再在本地按「精确 → 子串」挑出每行的最佳匹配，等价于原来逐行 ilike，
+   * 但请求数从「每行一次」降到 O(关键词数 / 30)。
+   */
+  async matchMaterialsByKeys(keys: string[]): Promise<MaterialRow[]> {
+    const ks = [...new Set((keys || []).map(k => (k ?? '').trim()).filter(Boolean))]
+    if (!ks.length) return []
+    const out: MaterialRow[] = []
+    const seen = new Set<string>()
+    // 每批 30 个关键词（每词 3 个条件），避免 or() 过长被拒
+    for (const part of chunk(ks, 30)) {
+      const conds: string[] = []
+      for (const k of part) {
+        const v = escOrVal(k)
+        conds.push(`model.ilike.%${v}%`, `part_no.ilike.%${v}%`, `name.ilike.%${v}%`)
+      }
+      const { data, error } = await supabase
+        .from('materials')
+        .select('id, name, model, brand, package, part_no, qty, image_path, alternates, categories(name)')
+        .is('deleted_at', null)
+        .or(conds.join(','))
+        .limit(1000)
+      if (error) throw error
+      for (const m of (data as unknown as MaterialRow[]) || []) {
+        if (seen.has(m.id)) continue
+        seen.add(m.id)
+        out.push(m)
+      }
+    }
+    return out
   }
 
   // ===== 统计 =====

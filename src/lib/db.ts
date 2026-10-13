@@ -502,7 +502,9 @@ export const deletePurchaseItem = (id: string): Promise<void> => s.deletePurchas
 
 export const getMaterialsByIds = (ids: string[]): Promise<MaterialRow[]> => s.getMaterialsByIds(ids)
 export const matchMaterialByModel = (model: string): Promise<MaterialRow[]> => s.matchMaterialByModel(model)
+export const matchMaterialsByKeys = (keys: string[]): Promise<MaterialRow[]> => s.matchMaterialsByKeys(keys)
 
+export const countMaterialsByCategory = (): Promise<Record<string, number>> => s.countMaterialsByCategory()
 export const statsOverview = (): Promise<StatsOverview> => s.statsOverview()
 export const statsByCategory = (): Promise<StatsCategoryRow[]> => s.statsByCategory()
 export const lowStockMaterials = (globalThreshold?: number): Promise<LowStockRow[]> => s.lowStockMaterials(globalThreshold)

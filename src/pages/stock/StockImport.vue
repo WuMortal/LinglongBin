@@ -312,7 +312,7 @@ import {
   Upload, Settings, Save, X, FileText, ChevronLeft, CircleAlert, Wand,
 } from 'lucide-vue-next'
 import {
-  listSuppliers, listCategories, matchMaterialByModel, createMaterial, updateMaterial,
+  listSuppliers, listCategories, matchMaterialsByKeys, createMaterial, updateMaterial,
   createMaterialFiles, applyStock,
 } from '../../lib/db'
 import {
@@ -723,6 +723,17 @@ async function onDrop(e: DragEvent) {
   await loadFiles(files)
 }
 
+/** 本地匹配用的归一化：去空格 + 转小写 */
+function normKey(v?: string | null): string {
+  return (v ?? '').trim().toLowerCase()
+}
+
+/**
+ * 一键匹配：
+ * 1) 先把所有行的「型号 / 商品编号」收集去重，一次批量查回候选物料（请求数从「每行一次」降到几批）；
+ * 2) 再在本地按「精确 → 子串」挑每行的命中，结果与原来的逐行模糊查询等价；
+ * 3) 手动指定过的行不覆盖。
+ */
 async function matchAllImp() {
   impBusy.value = true
   try {
@@ -730,13 +741,42 @@ async function matchAllImp() {
     if (!impSuppliersLoaded) {
       try { suppliers.value = await listSuppliers(); impSuppliersLoaded = true; suppliersLoaded.value = true } catch { /* 静默 */ }
     }
-    // 批量匹配型号（手动指定过的行不覆盖）
+
+    // ---- 1) 收集关键词 → 批量查询候选 ----
+    const keys: string[] = []
     for (const r of impRows.value) {
-      if (!r.model || r.manual) continue
-      const cands = await matchMaterialByModel(r.model)
-      const best = cands.length ? cands[0] : null
-      if (best) {
-        r.material_id = best.id; r.matchedName = best.name; r.stockQty = best.qty
+      if (r.manual) continue
+      if (r.model) keys.push(r.model)
+      if (r.partNo) keys.push(r.partNo)
+    }
+    const pool = await matchMaterialsByKeys(keys)
+
+    // 精确索引：物料的 型号 / 商品编号 / 名称 → 物料
+    const exact = new Map<string, MaterialRow>()
+    for (const m of pool) {
+      for (const k of [m.model, m.part_no, m.name]) {
+        const nk = normKey(k)
+        if (nk && !exact.has(nk)) exact.set(nk, m)
+      }
+    }
+
+    // ---- 2) 逐行在本批候选里挑：先精确，后子串 ----
+    for (const r of impRows.value) {
+      if (r.manual) continue
+      let hit: MaterialRow | null = null
+      for (const k of [r.model, r.partNo]) {
+        const nk = normKey(k)
+        if (!nk) continue
+        hit = exact.get(nk) ?? null
+        if (hit) break
+        // 子串兜底：等价于旧逻辑的 ilike %key%
+        hit = pool.find(m =>
+          normKey(m.model).includes(nk) || normKey(m.part_no).includes(nk) || normKey(m.name).includes(nk),
+        ) ?? null
+        if (hit) break
+      }
+      if (hit) {
+        r.material_id = hit.id; r.matchedName = hit.name; r.stockQty = hit.qty
       }
       // 匹配供应商
       if (r.supplierName) {

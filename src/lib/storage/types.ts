@@ -159,6 +159,8 @@ export interface DataStore {
   // ===== 物料 =====
   listMaterials(opts?: ListMaterialsOpts): Promise<MaterialRow[]>
   countMaterials(opts?: ListMaterialsOpts): Promise<number>
+  /** 各分类下的物料数量（key = 分类 id），供分类树徽标展示 */
+  countMaterialsByCategory(): Promise<Record<string, number>>
   createMaterial(payload: Partial<MaterialRow>): Promise<MaterialRow>
   deleteMaterial(id: string): Promise<void>
   /** 批量软删除（一次操作，供首页多选删除） */
@@ -238,6 +240,8 @@ export interface DataStore {
   // ===== 批量查询 =====
   getMaterialsByIds(ids: string[]): Promise<MaterialRow[]>
   matchMaterialByModel(model: string): Promise<MaterialRow[]>
+  /** 批量匹配：一次取回命中任意关键词（型号 / 商品编号 / 名称）的候选物料 */
+  matchMaterialsByKeys(keys: string[]): Promise<MaterialRow[]>
 
   // ===== 统计 =====
   statsOverview(): Promise<StatsOverview>

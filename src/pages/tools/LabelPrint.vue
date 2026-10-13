@@ -30,46 +30,20 @@
           </span>
           <span class="pane-count">{{ hasDefaultCfg ? '全部' : usableCatIds.size }}</span>
         </div>
-        <div class="pane-search">
-          <div class="inp-wrap">
-            <Search :size="13" class="inp-ico" style="display: inline-flex" />
-            <input v-model="treeSearch" placeholder="搜索分类…" />
-          </div>
-          <button class="btn btn-icon mini" title="全部展开" @click="expandAll">
-            <ChevronsUpDown :size="13" style="display: inline-flex; flex-shrink: 0" />
-          </button>
-          <button class="btn btn-icon mini" title="全部折叠" @click="collapseAll">
-            <ChevronsDownUp :size="13" style="display: inline-flex; flex-shrink: 0" />
-          </button>
-        </div>
-        <div class="tree">
-          <div v-for="node in filteredTree" :key="node.cat.id" class="tn">
-            <div class="tn-row">
-              <button v-if="node.children.length" class="tn-caret" :title="isOpen(node.cat.id) ? '折叠' : '展开'"
-                @click="toggleNode(node.cat.id)">
-                <ChevronRight :size="12" class="caret" :class="{ open: isOpen(node.cat.id) }"
-                  style="display: inline-flex" />
-              </button>
-              <span v-else class="tn-caret tn-caret--empty"></span>
-              <input class="tn-check" type="checkbox" :checked="catChecked(node)"
-                :indeterminate="catIndeterminate(node)" title="全选 / 取消该分类"
-                @change="toggleCat(node, ($event.target as HTMLInputElement).checked)" />
-              <button class="tn-name" :title="`查看并勾选「${node.cat.name}」下的物料`" @click="openPicker(node)">{{ node.cat.name
-                }}</button>
-              <span class="tn-count" :class="{ zero: matCount(node) === 0 }" :title="`${matCount(node)} 个物料`">{{ matCount(node) }}</span>
-            </div>
-            <div v-if="node.children.length && isOpen(node.cat.id)" class="tn-kids">
-              <div v-for="c in node.children" :key="c.cat.id" class="tn-row child">
-                <input class="tn-check" type="checkbox" :checked="catChecked(c)" :indeterminate="catIndeterminate(c)"
-                  title="全选 / 取消该分类" @change="toggleCat(c, ($event.target as HTMLInputElement).checked)" />
-                <button class="tn-name" :title="`查看并勾选「${c.cat.name}」下的物料`" @click="openPicker(c)">{{ c.cat.name
-                  }}</button>
-                <span class="tn-count" :class="{ zero: matCount(c) === 0 }" :title="`${matCount(c)} 个物料`">{{ matCount(c) }}</span>
-              </div>
-            </div>
-          </div>
-          <p v-if="!filteredTree.length" class="pane-empty">该模板没有可用分类</p>
-        </div>
+        <!-- 分类树：与首页共用 CategoryTree（多选模式，数量 = 各分类物料数） -->
+        <CategoryTree
+          :nodes="tree"
+          :counts="catCounts"
+          checkable
+          searchable
+          :is-checked="catChecked"
+          :is-indeterminate="catIndeterminate"
+          :name-title="(n) => `查看并勾选「${n.cat.name}」下的物料`"
+          @pick="openPicker"
+          @check="(n, on) => toggleCat(n, on)"
+        >
+          <template #empty>该模板没有可用分类</template>
+        </CategoryTree>
       </section>
 
       <!-- 中：已选物料 -->
@@ -162,7 +136,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Package, Printer, Search, Tags, X, ZoomIn, ZoomOut,
+  ChevronLeft, ChevronRight, Package, Printer, Search, Tags, X, ZoomIn, ZoomOut,
 } from 'lucide-vue-next'
 import {
   listLabelTemplates, listMaterials, listCategories, getMaterialsByIds, buildCategoryTree,
@@ -175,13 +149,13 @@ import MaterialPickDialog from '../../components/label/MaterialPickDialog.vue'
 import AppSelect from '../../components/form/AppSelect.vue'
 import PageBackButton from '../../components/PageBackButton.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import CategoryTree from '../../components/business/CategoryTree.vue'
 
 const templates = ref<LabelTemplate[]>([])
 const allMaterials = ref<MaterialRow[]>([])
 const categories = ref<Category[]>([])
 const tplId = ref<string>('')
 const selectedIds = ref<string[]>([])
-const treeSearch = ref('')
 const listSearch = ref('')
 const pageIdx = ref(0)
 /** 进入页面时拉取模板/物料/分类，初始即遮罩，避免一片空白 */
@@ -213,16 +187,6 @@ const tree = computed<CategoryNode[]>(() => {
   return all
     .map(n => ({ ...n, children: n.children.filter(c => usableCatIds.value.has(c.cat.id)) }))
     .filter(n => n.children.length)
-})
-
-const filteredTree = computed(() => {
-  const q = treeSearch.value.trim().toLowerCase()
-  if (!q) return tree.value
-  return tree.value.map(n => {
-    const kids = n.children.filter(c => c.cat.name.toLowerCase().includes(q))
-    if (n.cat.name.toLowerCase().includes(q)) return n
-    return { ...n, children: kids }
-  }).filter(n => n.children.length || n.cat.name.toLowerCase().includes(q))
 })
 
 /** 分类 id → 「大类 · 小类」展示名（大类本身就是一级，只有大类没有小类时只显示大类） */
@@ -260,25 +224,12 @@ function descendantIds(node: CategoryNode): string[] {
   return ids.flatMap(id => materialsByCat.value.get(id) ?? [])
 }
 
-/** 该分类子树下的物料数量（与复选框整类勾选范围一致），用于树上的数量徽标 */
-function matCount(node: CategoryNode): number {
-  return descendantIds(node).length
-}
-
-/** 折叠的大类 id；默认全部折叠（分类数据到位后按树初始化，见下方 watch） */
-const collapsedIds = ref<Set<string>>(new Set())
-
-/** 搜索时强制展开，否则命中的小类会被折叠住看不见 */
-function isOpen(id: string): boolean {
-  if (treeSearch.value.trim()) return true
-  return !collapsedIds.value.has(id)
-}
-function toggleNode(id: string) {
-  const s = new Set(collapsedIds.value)
-  if (s.has(id)) s.delete(id)
-  else s.add(id)
-  collapsedIds.value = s
-}
+/** 分类 id → 该分类自身物料数；树组件会自动把子级累加到大类上 */
+const catCounts = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const [id, ids] of materialsByCat.value) out[id] = ids.length
+  return out
+})
 
 /* ===== 分类物料弹框：点分类名打开，可搜索并逐项勾选 =====
  * 与树上复选框的分工：复选框 = 整类全选/取消；点名称 = 打开弹框按物料挑。
@@ -292,27 +243,6 @@ const pickerCatIds = computed(() =>
 
 function openPicker(node: CategoryNode) { pickerNode.value = node }
 function closePicker() { pickerNode.value = null }
-
-function expandAll() {
-  collapsedIds.value = new Set()
-}
-function collapseAll() {
-  // 搜索时 isOpen 会强制展开，不清空搜索词的话「全部折叠」看不出效果
-  treeSearch.value = ''
-  collapsedIds.value = new Set(tree.value.filter(n => n.children.length).map(n => n.cat.id))
-}
-
-/*
- * 默认全部折叠：分类是异步加载的，所以等 tree 有数据了再按「有子级的大类」初始化折叠集合；
- * 切换模板时重新折叠一次，换模板后仍是从折叠态开始。
- */
-let pendingCollapse = true
-watch(() => curTpl.value?.id, () => { pendingCollapse = true })
-watch(tree, (t) => {
-  if (!pendingCollapse || !t.length) return
-  pendingCollapse = false
-  collapsedIds.value = new Set(t.filter(n => n.children.length).map(n => n.cat.id))
-}, { immediate: true })
 
 function catChecked(node: CategoryNode): boolean {
   const ids = descendantIds(node)
@@ -682,131 +612,7 @@ onBeforeUnmount(() => { observer?.disconnect(); observer = null })
   pointer-events: none;
 }
 
-/* ===== 左：分类树 ===== */
-.tree {
-  flex: 1;
-  overflow: auto;
-  padding: 8px 10px 12px;
-}
-
-.tn-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
-  border-radius: var(--r-sm);
-  font-size: var(--fs-sm);
-  transition: background var(--motion);
-}
-
-.tn-row:hover {
-  background: var(--c-surface-hover);
-}
-
-/* 折叠箭头；无子级时用占位保持缩进对齐 */
-.tn-caret {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r-xs);
-  color: var(--c-text-3);
-  transition: background var(--motion), color var(--motion);
-}
-
-.tn-caret:hover {
-  background: var(--c-surface-active);
-  color: var(--c-text);
-}
-
-.tn-caret--empty {
-  visibility: hidden;
-}
-
-.caret {
-  transition: transform var(--motion);
-}
-
-.caret.open {
-  transform: rotate(90deg);
-}
-
-/* 复选框只管「整类全选 / 取消」 */
-.tn-check {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--c-primary);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-/* 点分类名 = 打开该分类的物料选择弹框 */
-.tn-name {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  font-size: var(--fs-sm);
-  padding: 2px 3px;
-  border-radius: var(--r-xs);
-  background: transparent;
-  color: inherit;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--motion-fast), background var(--motion-fast);
-}
-
-.tn-name:hover {
-  color: var(--c-primary);
-  background: var(--c-surface);
-}
-
-/* 分类行尾的物料数量徽标：0 个（无物料）时高亮，便于一眼看出哪些分类是空的 */
-.tn-count {
-  flex-shrink: 0;
-  margin-left: auto;
-  padding: 0 7px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--c-text-2);
-  background: var(--c-surface);
-  border-radius: var(--r-pill);
-}
-
-.tn-count.zero {
-  color: var(--c-danger);
-  background: color-mix(in srgb, var(--c-danger) 12%, transparent);
-}
-
-.tn-kids {
-  margin-left: 15px;
-  padding-left: 6px;
-  border-left: 1px dashed var(--c-border);
-}
-
-.tn-row.child {
-  color: var(--c-text-2);
-  padding-left: 2px;
-}
-
-.tn-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pane-empty {
-  margin: 20px 0;
-  text-align: center;
-  color: var(--c-text-3);
-  font-size: var(--fs-sm);
-}
+/* ===== 左：分类树（已抽成公共组件 CategoryTree，样式随组件） ===== */
 
 /* ===== 中：已选物料 ===== */
 .items {

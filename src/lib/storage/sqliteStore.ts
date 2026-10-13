@@ -342,6 +342,13 @@ function now(): string {
   return new Date().toISOString()
 }
 
+/** 数组分批（避免单条 SQL 占位符过多） */
+function chunkArr<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
 function toJson(v: unknown): string {
   return v == null ? '[]' : JSON.stringify(v)
 }
@@ -1092,6 +1099,18 @@ export class SqliteStore implements DataStore {
     return rows.map(mapDictItem)
   }
 
+  async countMaterialsByCategory(): Promise<Record<string, number>> {
+    const db = await this.ensure()
+    const rows = await db.select<{ category_id: string | null; c: number }[]>(
+      `select category_id, count(*) as c from materials
+       where deleted_at is null and category_id is not null
+       group by category_id`,
+    )
+    const out: Record<string, number> = {}
+    for (const r of rows) if (r.category_id) out[r.category_id] = Number(r.c) || 0
+    return out
+  }
+
   async countDictItems(): Promise<Record<string, number>> {
     const db = await this.ensure()
     const rows = await db.select<{ dict_key: string; c: number }[]>(
@@ -1814,6 +1833,37 @@ export class SqliteStore implements DataStore {
       [like, like, like],
     )
     return rows.map(mapMaterial)
+  }
+
+  /**
+   * 批量匹配：一次性取回「任意关键词命中型号 / 商品编号 / 名称」的候选物料（分批拼 SQL，避免占位符过多）。
+   * 与 Supabase 实现保持同一语义：调用方在本地按「精确 → 子串」再挑最佳匹配。
+   */
+  async matchMaterialsByKeys(keys: string[]): Promise<MaterialRow[]> {
+    const ks = [...new Set((keys || []).map(k => (k ?? '').trim()).filter(Boolean))]
+    if (!ks.length) return []
+    const db = await this.ensure()
+    const out: MaterialRow[] = []
+    const seen = new Set<string>()
+    for (const part of chunkArr(ks, 200)) {
+      const cond = part.map(() => '(c.model like ? or c.part_no like ? or c.name like ?)').join(' or ')
+      const params: unknown[] = []
+      for (const k of part) { const like = `%${k}%`; params.push(like, like, like) }
+      const rows = await db.select<Record<string, unknown>[]>(
+        `select c.*, cat.name as category_name, cat.threshold as category_threshold, parent.name as parent_name
+         from materials c left join categories cat on cat.id = c.category_id
+         left join categories parent on parent.id = cat.parent
+         where c.deleted_at is null and (${cond})`,
+        params,
+      )
+      for (const r of rows) {
+        const m = mapMaterial(r)
+        if (seen.has(m.id)) continue
+        seen.add(m.id)
+        out.push(m)
+      }
+    }
+    return out
   }
 
   // ===== 统计 =====
