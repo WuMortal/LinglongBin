@@ -342,8 +342,8 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
                   <span class="tag">{{ r.type === 'in' ? '入' : '出' }}</span>
                   <div class="info">
                     <small class="who">{{ fmtTime(r.created_at) }}</small>
-                    <small class="note" v-if="r.note || r.suppliers?.name">
-                      {{ [r.suppliers?.name, r.note].filter(Boolean).join(' · ') }}
+                    <small class="note" v-if="r.order_no || r.note || r.suppliers?.name">
+                      {{ [r.order_no, r.suppliers?.name, r.note].filter(Boolean).join(' · ') }}
                     </small>
                     <small v-if="r.status === 'void'" class="note void-note">
                       已撤销<template v-if="r.void_reason">：{{ r.void_reason }}</template>

@@ -178,7 +178,7 @@ import {
   Plus, Trash2, ClipboardList, X, Search,
 } from 'lucide-vue-next'
 import {
-  applyStock, updatePurchaseItem, createPurchaseOrder, listPurchaseOrders, updatePurchaseOrder,
+  stockInOrder, updatePurchaseItem, createPurchaseOrder, listPurchaseOrders, updatePurchaseOrder,
   deletePurchaseOrder, createPurchaseItems, listPurchaseItems, deletePurchaseItem,
   listPurchaseOrdersPage, countPurchaseOrders,
 } from '../../lib/db'
@@ -545,21 +545,29 @@ async function completeOrder(o: PoRow | PurchaseOrder) {
   if (!ok) return
   busy.value = true
   try {
-    for (const it of stockable) {
-      const qty = it.lack_qty > 0 ? it.lack_qty : it.qty
-      if (qty <= 0) continue
-      const mid = it.material_id as string
-      const cur = comps.value.find(c => c.id === mid)?.qty ?? 0
-      const fresh = await applyStock({
-        material_id: mid, type: 'in', qty, currentQty: cur,
-        note: `待采入库（${target.name}）`,
+    // 一次完成采购 = 一张入库单（source=purchase，source_id 指向待采单）
+    const poNote = `待采入库（${target.name}）`
+    const rows = stockable
+      .map(it => ({ it, qty: it.lack_qty > 0 ? it.lack_qty : it.qty }))
+      .filter(x => x.qty > 0)
+    if (rows.length) {
+      const { finals } = await stockInOrder({
+        type: 'in', source: 'purchase', source_id: target.id,
+        title: `待采入库：${target.name}`, note: poNote,
+        items: rows.map(x => ({
+          material_id: x.it.material_id as string, qty: x.qty, note: poNote,
+        })),
       })
-      const idx = comps.value.findIndex(c => c.id === mid)
-      if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty: fresh.qty }
-      const s = sumOf(mid)
-      s.total_in += qty; s.last30_in += qty
-      summaryMap.value.set(mid, s)
-      await updatePurchaseItem(it.id, { done: true, stock_qty: fresh.qty, lack_qty: 0 })
+      for (const x of rows) {
+        const mid = x.it.material_id as string
+        const freshQty = finals.get(mid) ?? 0
+        const idx = comps.value.findIndex(c => c.id === mid)
+        if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty: freshQty }
+        const s = sumOf(mid)
+        s.total_in += x.qty; s.last30_in += x.qty
+        summaryMap.value.set(mid, s)
+        await updatePurchaseItem(x.it.id, { done: true, stock_qty: freshQty, lack_qty: 0 })
+      }
     }
     await updatePurchaseOrder(target.id, { status: 'done' })
     refreshLogs()

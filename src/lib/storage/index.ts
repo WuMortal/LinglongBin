@@ -8,10 +8,9 @@ import { getAppSettings, type DataMode } from '../appSettings'
 
 export type { DataStore } from './types'
 export type {
-  ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
-  VoidStockLogsInput, VoidStockLogsResult,
+  ListMaterialsOpts,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
-  PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
+  PageResult, PurchaseOrderPageOpts,
 } from './types'
 // BomPickRecord 定义在 src/lib/types.ts（storage/types.ts 仅 import 未 re-export），需从上级模块导出
 export type { BomPickRecord } from '../types'

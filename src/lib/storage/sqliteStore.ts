@@ -14,13 +14,14 @@
 import Database from '@tauri-apps/plugin-sql'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import type {
-  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
-  VoidStockLogsInput, VoidStockLogsResult,
+  DataStore, ListMaterialsOpts,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
-  PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
+  PageResult, PurchaseOrderPageOpts,
+  StockOrderInput, StockOrderPageOpts,
 } from './types'
 import type {
-  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, BomProject, BomItem,
+  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, StockOrder, StockOrderSource,
+  BomProject, BomItem,
   BomPickRecord, PurchaseOrder, PurchaseItem, MaterialFile, DictType, DictItem,
   LabelTemplate, LabelBlock, LabelCatConfig, LabelSheetLayout,
   StockTake, StockTakeItem, StagnantRow,
@@ -116,10 +117,30 @@ create table if not exists material_params (
   unique (material_id, param_key)
 );
 
+-- 出入库单（主表）：一次出入库 = 1 单 N 明细（明细即 stock_log 挂 order_id）
+create table if not exists stock_orders (
+  id           text        primary key,
+  owner        text        not null,
+  order_no     text,                                          -- 单号：RK(入)/CK(出) + yyyyMMdd + 4 位序号
+  type         text        not null check (type in ('in','out')),
+  source       text        not null default 'manual',          -- manual | init | import | bom | purchase | stocktake | legacy
+  source_id    text,                                          -- 关联业务单 id（BOM 领料记录 / 待采单 / 盘点单）
+  title        text,                                          -- 摘要标题（如「订单导入：xxx.xls」）
+  supplier_id  text        references suppliers(id) on delete set null,  -- 单级供应商（入库常用）
+  note         text,
+  item_count   integer     not null default 0,                 -- 明细条数（冗余，列表展示用）
+  total_qty    integer     not null default 0,                 -- 明细数量合计（冗余，列表展示用）
+  status       text        default 'normal',                  -- normal = 有效 | void = 已撤销
+  void_reason  text,
+  voided_at    text,
+  created_at   text        default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 create table if not exists stock_log (
   id            text        primary key,
   owner         text        not null,
   material_id   text        references materials(id) on delete cascade,
+  order_id      text        references stock_orders(id) on delete set null,  -- 所属出入库单（legacy 旧数据为空）
   type          text        not null check (type in ('in','out')),
   qty           integer     not null,
   supplier_id   text        references suppliers(id) on delete set null,  -- 供应商（type=in 时记录）
@@ -130,7 +151,7 @@ create table if not exists stock_log (
   created_at    text        default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- 库存盘点（主表 + 明细）：差异在提交时通过 applyStock 入账
+-- 库存盘点（主表 + 明细）：差异在提交时通过 stockInOrder 入账
 create table if not exists stocktakes (
   id            text        primary key,
   owner         text        not null,
@@ -266,6 +287,9 @@ create index if not exists idx_materials_category on materials(category_id);
 create index if not exists idx_matparams_mat      on material_params(material_id);
 create index if not exists idx_matfiles_mat       on material_files(material_id);
 create index if not exists idx_stocklog_owner      on stock_log(owner, created_at);
+create index if not exists idx_stockorders_owner   on stock_orders(owner, created_at);
+create index if not exists idx_stockorders_no      on stock_orders(owner, order_no);
+create index if not exists idx_stocklog_order      on stock_log(order_id);
 create index if not exists idx_stocktakes_owner     on stocktakes(owner);
 create index if not exists idx_stocktake_items_take on stocktake_items(take_id);
 create index if not exists idx_bomitems_project    on bom_items(project_id);
@@ -279,6 +303,7 @@ create index if not exists idx_labeltpl_owner      on label_templates(owner, del
 // 旧库迁移：增量补列（软删除 deleted_at、stock_log.supplier_id）
 // SQLite 不支持 DROP COLUMN（3.35+），materials 旧列保留不影响新逻辑
 const MIGRATE_COLUMNS: Array<{ table: string; column: string }> = [
+  { table: 'stock_log', column: 'order_id' },
   { table: 'stock_log', column: 'supplier_id' },
   { table: 'stock_log', column: 'status' },
   { table: 'stock_log', column: 'void_reason' },
@@ -328,6 +353,86 @@ async function columnExists(db: Database, table: string, column: string): Promis
     `pragma table_info(${table})`,
   )
   return rows.some(r => r.name === column)
+}
+
+/**
+ * 生成出入库单号：RK(入)/CK(出) + 本地日期 yyyyMMdd + 4 位序号。
+ * 序号取当日同前缀单号的最大值 + 1（不做 count，避免删行后重号；单用户串行无并发问题）。
+ */
+async function nextOrderNo(db: Database, type: 'in' | 'out', date: Date): Promise<string> {
+  const prefix = `${type === 'in' ? 'RK' : 'CK'}${yyyyMMdd(date)}`
+  const rows = await db.select<{ m: number | null }[]>(
+    `select coalesce(max(cast(substr(order_no, ?) as integer)), 0) as m
+     from stock_orders where order_no like ?`,
+    [`${prefix}-`.length + 1, `${prefix}-%`],
+  )
+  const seq = (Number(rows[0]?.m ?? 0) + 1).toString().padStart(4, '0')
+  return `${prefix}-${seq}`
+}
+
+/**
+ * 历史流水聚合为 legacy 单（幂等：没有未挂单流水时直接返回）。
+ * 规则（方案 B）：type 相同 + note 归一化相同 + 与上一条时间相邻 ≤ 60 秒 → 聚为一单；
+ * 单号按组首条流水日期编号，title 取 note；组内全部已撤销则整单置为已撤销。
+ */
+async function migrateLegacyStockOrders(db: Database): Promise<void> {
+  const cnt = await db.select<{ n: number }[]>(
+    'select count(*) as n from stock_log where order_id is null',
+  )
+  if (!Number(cnt[0]?.n ?? 0)) return
+
+  const rows = await db.select<{
+    id: string; type: 'in' | 'out'; qty: number; note: string | null
+    status: string | null; void_reason: string | null; voided_at: string | null
+    created_at: string
+  }[]>(
+    `select id, type, qty, note, status, void_reason, voided_at, created_at
+     from stock_log where order_id is null order by created_at asc, id asc`,
+  )
+  if (!rows.length) return
+
+  // 分组：物理相邻的两条流水之间判断是否延续
+  type G = (typeof rows)[number]
+  const groups: G[][] = []
+  let cur: G[] = [rows[0]]
+  for (let i = 1; i < rows.length; i++) {
+    const prev = cur[cur.length - 1]
+    const gap = (Date.parse(rows[i].created_at) || 0) - (Date.parse(prev.created_at) || 0)
+    const sameKey = rows[i].type === prev.type
+      && (rows[i].note ?? '') === (prev.note ?? '')
+    if (sameKey && gap <= 60_000) cur.push(rows[i])
+    else { groups.push(cur); cur = [rows[i]] }
+  }
+  groups.push(cur)
+
+  for (const g of groups) {
+    const first = g[0]
+    const allVoid = g.every(x => x.status === 'void')
+    const voidedAt = allVoid
+      ? (g.map(x => x.voided_at).filter(Boolean).sort().pop() ?? null)
+      : null
+    const orderId = uuid()
+    const orderNo = await nextOrderNo(db, first.type, new Date(first.created_at))
+    await db.execute(
+      `insert into stock_orders
+         (id, owner, order_no, type, source, source_id, title, supplier_id, note,
+          item_count, total_qty, status, void_reason, voided_at, created_at)
+       values (?, ?, ?, ?, 'legacy', null, ?, null, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderId, LOCAL_OWNER, orderNo, first.type,
+        first.note ?? null, first.note ?? null,
+        g.length, g.reduce((s, x) => s + (Number(x.qty) || 0), 0),
+        allVoid ? 'void' : 'normal',
+        allVoid ? (g.find(x => x.void_reason)?.void_reason ?? null) : null,
+        voidedAt, first.created_at,
+      ],
+    )
+    const ph = g.map(() => '?').join(',')
+    await db.execute(
+      `update stock_log set order_id = ? where id in (${ph})`,
+      [orderId, ...g.map(x => x.id)],
+    )
+  }
 }
 
 // ===== 工具函数 =====
@@ -488,6 +593,7 @@ interface StockLogDbRow {
   type: 'in' | 'out'; qty: number; note: string | null; created_at: string
   supplier_id?: string | null; supplier_name?: string | null
   status?: string | null; void_reason?: string | null; voided_at?: string | null
+  order_id?: string | null; order_no?: string | null
   comp_name?: string | null; comp_model?: string | null; comp_package?: string | null
 }
 
@@ -500,10 +606,45 @@ function mapStockLog(r: Record<string, unknown>): StockLog {
     status: row.status === 'void' ? 'void' : 'normal',
     void_reason: row.void_reason ?? null,
     voided_at: row.voided_at ?? null,
+    order_id: (row as { order_id?: string | null }).order_id ?? null,
+    order_no: row.order_no ?? null,
     suppliers: row.supplier_name != null ? { name: row.supplier_name } : null,
     materials: row.comp_name != null
       ? { name: row.comp_name, model: row.comp_model ?? null, package: row.comp_package ?? null }
       : null,
+  }
+}
+
+interface StockOrderDbRow {
+  id: string; owner: string; order_no: string | null
+  type: 'in' | 'out'; source: string
+  source_id: string | null; title: string | null
+  supplier_id: string | null; note: string | null
+  item_count: number; total_qty: number
+  status: string | null; void_reason: string | null; voided_at: string | null
+  created_at: string
+  supplier_name?: string | null
+}
+
+const STOCK_ORDER_SOURCES = ['manual', 'init', 'import', 'bom', 'purchase', 'stocktake', 'legacy'] as const
+
+function mapStockOrder(r: Record<string, unknown>): StockOrder {
+  const row = r as unknown as StockOrderDbRow
+  const source = (STOCK_ORDER_SOURCES as readonly string[]).includes(row.source)
+    ? row.source as StockOrderSource
+    : 'legacy'
+  return {
+    id: row.id, owner: row.owner, order_no: row.order_no ?? null,
+    type: row.type, source,
+    source_id: row.source_id ?? null, title: row.title ?? null,
+    supplier_id: row.supplier_id ?? null, note: row.note ?? null,
+    item_count: Number(row.item_count) || 0,
+    total_qty: Number(row.total_qty) || 0,
+    status: row.status === 'void' ? 'void' : 'normal',
+    void_reason: row.void_reason ?? null,
+    voided_at: row.voided_at ?? null,
+    created_at: row.created_at,
+    suppliers: row.supplier_name != null ? { name: row.supplier_name } : null,
   }
 }
 
@@ -656,6 +797,8 @@ export class SqliteStore implements DataStore {
         await db.execute(`update stock_log set status = 'normal' where status is null or status = ''`)
         // 迁移完成后再建索引（避免列缺失时建索引报错）
         try { await db.execute(INDEXES_SQL) } catch { /* 旧库兼容，忽略索引错误 */ }
+        // 历史流水聚合为 legacy 单据（幂等：无未挂单流水时直接返回）
+        try { await migrateLegacyStockOrders(db) } catch { /* 迁移失败不阻塞启动，下次重试 */ }
         // 内置标签模板：清库 / 新装时自动写入（种子只在 App 层，SQL 初始化脚本不含）
         try { await seedBuiltinLabelTemplate(db) } catch { /* 种子失败不阻塞启动 */ }
         // 缓存 resource 目录（图片相对路径 → asset URL 用）；去掉 Windows canonicalize 的 \\?\ 前缀
@@ -920,13 +1063,13 @@ export class SqliteStore implements DataStore {
       await this.saveMaterialParams(id, payload.params, owner)
     }
 
-    // 初始库存 > 0 时写入一条入库流水（备注：初始入库）
+    // 初始库存 > 0 时生成一张初始入库单（1 单 1 明细，明细备注：初始入库）
     if ((payload.qty ?? 0) > 0) {
-      await db.execute(
-        `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, status, created_at)
-         values (?, ?, ?, 'in', ?, null, ?, 'normal', ?)`,
-        [uuid(), owner, id, payload.qty, '初始入库', now()],
-      )
+      await this.stockInOrder({
+        type: 'in', source: 'init', source_id: null,
+        title: '初始入库', supplier_id: null, note: null,
+        items: [{ material_id: id, qty: payload.qty ?? 0, note: '初始入库' }],
+      })
     }
     return (await this.getMaterial(id))
   }
@@ -1208,32 +1351,6 @@ export class SqliteStore implements DataStore {
   }
 
   // ===== 出入库 =====
-  async addStockLog(input: StockInput): Promise<StockLog> {
-    const db = await this.ensure()
-    const owner = await this.getOwnerId()
-    const id = uuid()
-    await db.execute(
-      `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, status, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, 'normal', ?)`,
-      [
-        id, owner, input.material_id, input.type, input.qty,
-        input.type === 'in' ? (input.supplier_id ?? null) : null,
-        input.note ?? null, now(),
-      ],
-    )
-    const rows = await db.select<Record<string, unknown>[]>(
-      `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
-              sup.name as supplier_name
-       from stock_log s
-       left join materials c on c.id = s.material_id
-       left join suppliers sup on sup.id = s.supplier_id
-       where s.id = ?`,
-      [id],
-    )
-    if (!rows.length) throw new Error('流水创建失败')
-    return mapStockLog(rows[0])
-  }
-
   async listStockLog(opts: { limit?: number; materialId?: string; type?: 'in' | 'out' } = {}): Promise<StockLog[]> {
     const db = await this.ensure()
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 1000))
@@ -1245,52 +1362,16 @@ export class SqliteStore implements DataStore {
     params.push(limit)
     const rows = await db.select<Record<string, unknown>[]>(
       `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
-              sup.name as supplier_name
+              sup.name as supplier_name, o.order_no as order_no
        from stock_log s
        left join materials c on c.id = s.material_id
        left join suppliers sup on sup.id = s.supplier_id
+       left join stock_orders o on o.id = s.order_id
        ${where}
        order by s.created_at desc limit ?`,
       params,
     )
     return rows.map(mapStockLog)
-  }
-
-  async listStockLogPage(opts: StockLogPageOpts = {}): Promise<PageResult<StockLog>> {
-    const db = await this.ensure()
-    const limit = Math.max(1, opts.limit ?? 20)
-    const offset = Math.max(0, opts.offset ?? 0)
-    const conds: string[] = []
-    const params: unknown[] = []
-    if (opts.type) { conds.push('s.type = ?'); params.push(opts.type) }
-    // 关键词：物料名称 + 备注（均在服务端模糊匹配）
-    if (opts.keyword && opts.keyword.trim()) {
-      conds.push('(c.name like ? or s.note like ?)')
-      const kw = `%${opts.keyword.trim()}%`
-      params.push(kw, kw)
-    }
-    if (opts.status) {
-      conds.push(opts.status === 'void' ? "s.status = 'void'" : "coalesce(s.status, 'normal') = 'normal'")
-    }
-    if (opts.from) { conds.push('s.created_at >= ?'); params.push(opts.from) }
-    if (opts.to) { conds.push('s.created_at <= ?'); params.push(opts.to) }
-    const where = conds.length ? 'where ' + conds.join(' and ') : ''
-    const countRows = await db.select<{ n: number }[]>(
-      `select count(*) as n from stock_log s left join materials c on c.id = s.material_id ${where}`,
-      params,
-    )
-    const total = Number(countRows[0]?.n ?? 0)
-    const rows = await db.select<Record<string, unknown>[]>(
-      `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
-              sup.name as supplier_name
-       from stock_log s
-       left join materials c on c.id = s.material_id
-       left join suppliers sup on sup.id = s.supplier_id
-       ${where}
-       order by s.created_at desc limit ? offset ?`,
-      [...params, limit, offset],
-    )
-    return { rows: rows.map(mapStockLog), total }
   }
 
   async stagnantMaterials(days = 180): Promise<StagnantRow[]> {
@@ -1347,127 +1428,222 @@ export class SqliteStore implements DataStore {
     }))
   }
 
-  async applyStock(input: ApplyStockInput): Promise<MaterialRow> {
-    const db = await this.ensure()
-    if (input.type === 'out' && input.qty > (input.currentQty || 0))
-      throw new Error(`出库数量 ${input.qty} 超过当前库存 ${input.currentQty || 0}`)
-    const next = input.type === 'in'
-      ? (input.currentQty || 0) + input.qty
-      : (input.currentQty || 0) - input.qty
-    await this.addStockLog({
-      material_id: input.material_id, type: input.type,
-      qty: input.qty, supplier_id: input.supplier_id ?? null, note: input.note,
-    })
-    return await this.updateMaterial(input.material_id, { qty: next })
-  }
-
+  // ===== 出入库单（单据化） =====
   /**
-   * 批量出入库：库存基线按物料读库获取（不依赖前端缓存），同一物料多条流水
-   * 合并计算终值；一条多值 insert 写完全部流水，再逐物料更新 qty。
-   * 任一物料库存不足 / 数量非法则整体抛错，不写任何数据。
+   * 建单并批量入账：一次出入库 = 1 单 N 明细。
+   * 先全量校验（物料存在、数量 > 0、出库不超库存）→ 建单 → 写明细流水（挂 order_id）→
+   * 更新库存；任一步失败清理已写数据后抛错（SQLite 无显式事务，validate-then-write 反向补偿）。
    */
-  async applyStockBatch(items: ApplyStockBatchItem[]): Promise<Map<string, number>> {
-    if (!items.length) return new Map()
+  async stockInOrder(input: StockOrderInput): Promise<{ order: StockOrder; finals: Map<string, number> }> {
+    const items = input.items ?? []
+    if (!items.length) throw new Error('出入库明细不能为空')
     const db = await this.ensure()
     const owner = await this.getOwnerId()
+    const createdAt = input.created_at ?? now()
+
+    // ---- 校验 + 终值计算（不依赖前端缓存，按物料累加） ----
     const ids = [...new Set(items.map(i => i.material_id))]
     const mats = await this.getMaterialsByIds(ids)
     const byId = new Map(mats.map(m => [m.id, m]))
     if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
 
-    // 累加校验：出库超出当前库存整体拦截（负库存兜底）
     const finals = new Map<string, number>()
+    let totalQty = 0
     for (const it of items) {
       if (!(it.qty > 0)) throw new Error('出入库数量必须大于 0')
       const base = finals.get(it.material_id) ?? (Number(byId.get(it.material_id)?.qty) || 0)
-      const next = base + (it.type === 'in' ? it.qty : -it.qty)
+      const next = base + (input.type === 'in' ? it.qty : -it.qty)
       if (next < 0) {
         const name = byId.get(it.material_id)?.name ?? it.material_id
         throw new Error(`「${name}」出库数量 ${it.qty} 超过当前库存 ${base}`)
       }
       finals.set(it.material_id, next)
+      totalQty += it.qty
     }
 
-    // 多值 insert 写入全部流水（分块提交，避免触碰 SQLite 变量数上限）
-    const CHUNK = 500
-    for (let i = 0; i < items.length; i += CHUNK) {
-      const chunk = items.slice(i, i + CHUNK)
-      const params: unknown[] = []
-      for (const it of chunk) {
-        params.push(
-          uuid(), owner, it.material_id, it.type, it.qty,
-          it.type === 'in' ? (it.supplier_id ?? null) : null, it.note ?? null, now(),
+    // ---- 建单 ----
+    const orderId = uuid()
+    const orderNo = await nextOrderNo(db, input.type, new Date(createdAt))
+    await db.execute(
+      `insert into stock_orders
+         (id, owner, order_no, type, source, source_id, title, supplier_id, note,
+          item_count, total_qty, status, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?)`,
+      [
+        orderId, owner, orderNo, input.type, input.source,
+        input.source_id ?? null, input.title ?? null,
+        input.supplier_id ?? null, input.note ?? null,
+        items.length, totalQty, createdAt,
+      ],
+    )
+
+    // ---- 明细流水 + 库存更新（失败清理） ----
+    try {
+      const CHUNK = 500
+      for (let i = 0; i < items.length; i += CHUNK) {
+        const chunk = items.slice(i, i + CHUNK)
+        const params: unknown[] = []
+        for (const it of chunk) {
+          params.push(
+            uuid(), owner, it.material_id, input.type, it.qty, orderId,
+            input.type === 'in' ? (it.supplier_id ?? input.supplier_id ?? null) : null,
+            it.note ?? null, createdAt,
+          )
+        }
+        await db.execute(
+          `insert into stock_log (id, owner, material_id, type, qty, order_id, supplier_id, note, status, created_at)
+           values ${chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?)").join(', ')}`,
+          params,
         )
       }
-      await db.execute(
-        `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, status, created_at)
-         values ${chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, 'normal', ?)").join(', ')}`,
-        params,
-      )
+      for (const [id, qty] of finals) {
+        await db.execute('update materials set qty = ? where id = ?', [qty, id])
+      }
+    } catch (e) {
+      // 反向补偿：不留半单（无显式事务，失败时删除已写数据）
+      try {
+        await db.execute('delete from stock_log where order_id = ?', [orderId])
+        await db.execute('delete from stock_orders where id = ?', [orderId])
+      } catch { /* 清理失败忽略，以原始错误为准 */ }
+      throw e
     }
-    // 逐物料更新库存（去重后的物料，条数远少于流水）
-    for (const [id, qty] of finals) {
-      await db.execute('update materials set qty = ? where id = ?', [qty, id])
-    }
-    return finals
+
+    const order = await this.getStockOrder(orderId)
+    return { order, finals }
   }
 
-  /** 单条撤销的内部实现：校验状态 → 回滚库存 → 置为已撤销 */
-  private async voidOneStockLog(id: string, reason: string | null): Promise<void> {
+  /** 读单条出入库单（join 供应商名） */
+  async getStockOrder(id: string): Promise<StockOrder> {
     const db = await this.ensure()
-    const rows = await db.select<Record<string, unknown>[]>('select * from stock_log where id = ?', [id])
-    if (!rows.length) throw new Error('记录不存在')
-    const log = mapStockLog(rows[0])
-    if (log.status === 'void') throw new Error('该记录已撤销，无法重复操作')
+    const rows = await db.select<Record<string, unknown>[]>(
+      `select o.*, sup.name as supplier_name
+       from stock_orders o
+       left join suppliers sup on sup.id = o.supplier_id
+       where o.id = ?`,
+      [id],
+    )
+    if (!rows.length) throw new Error('出入库单不存在')
+    return mapStockOrder(rows[0])
+  }
 
-    // 库存回滚：撤销入库 → 扣回数量；撤销出库 → 加回数量
-    if (log.material_id) {
-      const mats = await this.getMaterialsByIds([log.material_id])
-      if (mats.length) {
-        const cur = Number(mats[0].qty) || 0
-        if (log.type === 'in' && log.qty > cur)
-          throw new Error(`当前库存 ${cur} 不足，无法撤销本次入库 ${log.qty}`)
-        const next = log.type === 'in' ? cur - log.qty : cur + log.qty
-        await this.updateMaterial(log.material_id, { qty: next })
+  async pageStockOrders(opts: StockOrderPageOpts = {}): Promise<PageResult<StockOrder>> {
+    const db = await this.ensure()
+    const limit = Math.max(1, opts.limit ?? 20)
+    const offset = Math.max(0, opts.offset ?? 0)
+    const conds: string[] = []
+    const params: unknown[] = []
+    if (opts.type) { conds.push('o.type = ?'); params.push(opts.type) }
+    if (opts.source) { conds.push('o.source = ?'); params.push(opts.source) }
+    if (opts.status) {
+      conds.push(opts.status === 'void' ? "o.status = 'void'" : "coalesce(o.status, 'normal') = 'normal'")
+    }
+    if (opts.from) { conds.push('o.created_at >= ?'); params.push(opts.from) }
+    if (opts.to) { conds.push('o.created_at <= ?'); params.push(opts.to) }
+    // 关键词：多词 OR 并集（与首页搜索一致），单号 / 标题 / 备注 + 明细物料名 / 型号 / 编号
+    if (opts.keyword && opts.keyword.trim()) {
+      const kws = opts.keyword.trim().split(/[\s,，]+/).filter(Boolean)
+      if (kws.length) {
+        const kwConds = kws.map(kw => {
+          const k = `%${kw}%`
+          params.push(k, k, k, k, k, k)
+          return `(o.order_no like ? or o.title like ? or o.note like ?
+                   or exists (select 1 from stock_log sl
+                               left join materials m on m.id = sl.material_id
+                               where sl.order_id = o.id and (m.name like ? or m.model like ? or m.part_no like ?)))`
+        })
+        conds.push('(' + kwConds.join(' or ') + ')')
       }
     }
-
-    await db.execute(
-      `update stock_log set status = 'void', void_reason = ?, voided_at = ? where id = ?`,
-      [reason, now(), id],
+    const where = conds.length ? 'where ' + conds.join(' and ') : ''
+    const countRows = await db.select<{ n: number }[]>(
+      `select count(*) as n from stock_orders o ${where}`,
+      [...params],
     )
+    const total = Number(countRows[0]?.n ?? 0)
+    const rows = await db.select<Record<string, unknown>[]>(
+      `select o.*, sup.name as supplier_name
+       from stock_orders o
+       left join suppliers sup on sup.id = o.supplier_id
+       ${where}
+       order by o.created_at desc limit ? offset ?`,
+      [...params, limit, offset],
+    )
+    return { rows: rows.map(mapStockOrder), total }
   }
 
-  async voidStockLog(input: VoidStockLogInput): Promise<StockLog> {
+  async listStockLogsByOrder(orderId: string): Promise<StockLog[]> {
     const db = await this.ensure()
-    await this.voidOneStockLog(input.id, input.reason?.trim() || null)
-    const fresh = await db.select<Record<string, unknown>[]>(
+    const rows = await db.select<Record<string, unknown>[]>(
       `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
               sup.name as supplier_name
        from stock_log s
        left join materials c on c.id = s.material_id
        left join suppliers sup on sup.id = s.supplier_id
-       where s.id = ?`,
-      [input.id],
+       where s.order_id = ?
+       order by s.created_at asc, s.id asc`,
+      [orderId],
     )
-    return mapStockLog(fresh[0])
+    return rows.map(mapStockLog)
   }
 
-  async voidStockLogs(input: VoidStockLogsInput): Promise<VoidStockLogsResult> {
-    const reason = input.reason?.trim() || null
-    let done = 0
-    const failedIds: string[] = []
-    const errors: string[] = []
-    for (const id of input.ids ?? []) {
-      try {
-        await this.voidOneStockLog(id, reason)
-        done++
-      } catch (e: unknown) {
-        failedIds.push(id)
-        errors.push((e as Error)?.message || '撤销失败')
+  /**
+   * 撤销整单：先全量校验（每个物料回滚后不得为负）后执行，任一明细失败整单报错，
+   * 不存在「部分撤销」状态；物料已删除的明细跳过回滚（软删物料库存无意义）。
+   */
+  async voidStockOrder(id: string, reason: string): Promise<void> {
+    const db = await this.ensure()
+    const rows = await db.select<Record<string, unknown>[]>(
+      'select * from stock_orders where id = ?', [id],
+    )
+    if (!rows.length) throw new Error('单据不存在')
+    const order = mapStockOrder(rows[0])
+    if (order.status === 'void') throw new Error('该单据已撤销，无法重复操作')
+    const why = reason?.trim() || null
+
+    // 参与回滚的明细 = 该单下仍有效的流水
+    const logs = (await this.listStockLogsByOrder(id)).filter(l => l.status === 'normal')
+    if (!logs.length) {
+      await db.execute(
+        `update stock_orders set status = 'void', void_reason = ?, voided_at = ? where id = ?`,
+        [why, now(), id],
+      )
+      return
+    }
+
+    // 回滚增量：撤销入库 → 扣回；撤销出库 → 加回（按物料聚合）
+    const deltas = new Map<string, number>()
+    for (const l of logs) {
+      if (!l.material_id) continue
+      const d = deltas.get(l.material_id) ?? 0
+      deltas.set(l.material_id, d + (l.type === 'in' ? -l.qty : l.qty))
+    }
+    const mats = await this.getMaterialsByIds([...deltas.keys()])
+    const byId = new Map(mats.map(m => [m.id, m]))
+
+    // ---- 全量校验：物料存在且回滚后不为负 ----
+    for (const [mid, delta] of deltas) {
+      const mat = byId.get(mid)
+      if (!mat) continue // 物料已软删：跳过回滚，不阻塞整单撤销
+      const cur = Number(mat.qty) || 0
+      if (cur + delta < 0) {
+        throw new Error(`「${mat.name}」当前库存 ${cur}，整单撤销后将变为负数，无法撤销`)
       }
     }
-    return { done, failedIds, errors }
+    // ---- 执行：先回滚库存，再置流水与单据撤销 ----
+    for (const [mid, delta] of deltas) {
+      const mat = byId.get(mid)
+      if (!mat) continue
+      await db.execute('update materials set qty = ? where id = ?', [Number(mat.qty) + delta, mid])
+    }
+    await db.execute(
+      `update stock_log set status = 'void', void_reason = ?, voided_at = ?
+       where order_id = ? and coalesce(status, 'normal') = 'normal'`,
+      [why, now(), id],
+    )
+    await db.execute(
+      `update stock_orders set status = 'void', void_reason = ?, voided_at = ? where id = ?`,
+      [why, now(), id],
+    )
   }
 
   // ===== 库存盘点 =====

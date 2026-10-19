@@ -313,9 +313,9 @@ import {
 } from 'lucide-vue-next'
 import {
   listSuppliers, listCategories, matchMaterialsByKeys, createMaterial, updateMaterial,
-  createMaterialFiles, applyStockBatch,
+  createMaterialFiles, stockInOrder,
 } from '../../lib/db'
-import type { ApplyStockBatchItem } from '../../lib/storage'
+// 移除不存在的 StockOrderItem 类型导入，该类型未在 storage 模块中定义
 import {
   parseSheet, detectColumnsPrecise, pickPreset, sliceAt, IMPORT_PRESETS,
   type ImportPreset,
@@ -336,6 +336,7 @@ import ProgressOverlay from '../../components/ProgressOverlay.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { useToast } from '../../composables/toast'
 import { useStockData } from '../../composables/useStockData'
+import { StockOrderItem } from '@/lib/storage/types'
 
 const toast = useToast()
 const { comps, suppliers, suppliersLoaded, summaryMap, refreshLogs, sumOf } = useStockData()
@@ -1118,7 +1119,8 @@ async function doImport() {
   let ok = 0, created = 0
   try {
     // 阶段一：建料 / 补全资料（逐行处理），收集待入账明细
-    const stockItems: ApplyStockBatchItem[] = []
+    const stockItems: StockOrderItem[] = []
+    const srcSet = new Set<string>()
     for (const r of impRows.value) {
       impDone.value++
       let mid = r.material_id
@@ -1164,15 +1166,23 @@ async function doImport() {
       // 已在库的匹配物料为累加入库，仍用本行数量
       const stockQty = pend && pend.qty > 0 ? pend.qty : r.qty
       stockItems.push({
-        material_id: mid, type: 'in', qty: stockQty,
+        material_id: mid, qty: stockQty,
         supplier_id: r.supplier_id, note: noteOf(r),
       })
+      if (r.src) srcSet.add(r.src)
       ok++
     }
-    // 阶段二：批量入账 —— 一次写完全部入库流水，再按物料聚合更新库存，
-    // 避免逐行 2 次往返（流水条数不变，网络请求从 2N 降到 1 + 去重物料数）
+    // 阶段二：批量入账 —— 一次导入 = 一张入库单（source=import），
+    // 一次建单写完全部明细流水，再按物料聚合更新库存（网络请求远少于逐行入账）
     if (stockItems.length) {
-      const finals = await applyStockBatch(stockItems)
+      const srcs = [...srcSet]
+      const title = srcs.length === 0 ? '订单导入'
+        : srcs.length === 1 ? `${srcs[0]} 导入`
+          : `订单导入（${srcs.length} 个文件）`
+      const { finals } = await stockInOrder({
+        type: 'in', source: 'import', source_id: null,
+        title, note: null, items: stockItems,
+      })
       // 同步本地库存
       for (const [id, qty] of finals) {
         const idx = comps.value.findIndex(c => c.id === id)

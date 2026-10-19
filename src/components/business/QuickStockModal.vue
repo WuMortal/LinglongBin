@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { Inbox, ArrowUpFromDot } from 'lucide-vue-next'
 import Segmented from '../form/Segmented.vue'
 import AppSelect from '../form/AppSelect.vue'
-import { applyStock, listSuppliers, listDictItems } from '../../lib/db'
+import { stockInOrder, listSuppliers, listDictItems } from '../../lib/db'
 import type { MaterialRow, SupplierRow } from '../../lib/types'
 import { useToast } from '../../composables/toast'
 
@@ -66,16 +66,20 @@ async function submit() {
   if (n <= 0) { toast.error('数量需为正整数'); return }
   busy.value = true
   try {
-    const fresh = await applyStock({
-      material_id: m.id, type: type.value, qty: n, currentQty: m.qty,
+    // 出库时把用途并入备注（用途优先，手动备注跟在后面）
+    const finalNote = type.value === 'out'
+      ? [purpose.value, note.value.trim()].filter(Boolean).join('：') || null
+      : (note.value.trim() || null)
+    const { finals } = await stockInOrder({
+      type: type.value, source: 'manual', source_id: null,
+      title: `${type.value === 'in' ? '入库' : '出库'} · ${m.name}`,
       supplier_id: type.value === 'in' ? supplierId.value : null,
-      // 出库时把用途并入备注（用途优先，手动备注跟在后面）
-      note: type.value === 'out'
-        ? [purpose.value, note.value.trim()].filter(Boolean).join('：') || null
-        : (note.value.trim() || null),
+      note: finalNote,
+      items: [{ material_id: m.id, qty: n, note: finalNote }],
     })
+    const freshQty = finals.get(m.id) ?? m.qty + (type.value === 'in' ? n : -n)
     toast.success(type.value === 'in' ? `入库 +${n}` : `出库 -${n}`)
-    emit('done', { materialId: m.id, qty: fresh.qty, type: type.value })
+    emit('done', { materialId: m.id, qty: freshQty, type: type.value })
     emit('close')
   } catch (e: unknown) {
     toast.error('操作失败：' + ((e as Error).message || e))

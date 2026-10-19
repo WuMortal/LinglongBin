@@ -138,7 +138,7 @@ import {
   Inbox, ArrowLeftRight, ArrowUpFromDot, Search, RefreshCw, Tag, X,
 } from 'lucide-vue-next'
 import {
-  applyStock, listSuppliers, listDictItems, listMaterialsPage,
+  stockInOrder, listSuppliers, listDictItems, listMaterialsPage,
   descendantCategoryIds, getCategoryParams, buildCategoryTree,
   type CategoryNode, type MaterialPageOpts,
 } from '../../lib/db'
@@ -411,21 +411,24 @@ async function submitQuick() {
   if (q.type === 'out' && qty > q.mat.qty) { toast.error(`出库数量 ${qty} 超过当前库存 ${q.mat.qty}`); return }
   quickBusy.value = true
   try {
-    const fresh = await applyStock({
-      material_id: q.mat.id, type: q.type, qty,
-      currentQty: q.mat.qty,
+    // 出库时把用途并入备注（用途优先，手动备注跟在后面）
+    const finalNote = q.type === 'out'
+      ? [q.purpose, q.note.trim()].filter(Boolean).join('：') || null
+      : (q.note.trim() || null)
+    const { finals } = await stockInOrder({
+      type: q.type, source: 'manual', source_id: null,
+      title: `${q.type === 'in' ? '入库' : '出库'} · ${q.mat.name}`,
       supplier_id: q.type === 'in' ? q.supplier_id : null,
-      // 出库时把用途并入备注（用途优先，手动备注跟在后面）
-      note: q.type === 'out'
-        ? [q.purpose, q.note.trim()].filter(Boolean).join('：') || null
-        : (q.note.trim() || null),
+      note: finalNote,
+      items: [{ material_id: q.mat.id, qty, note: finalNote }],
     })
+    const freshQty = finals.get(q.mat.id) ?? (q.mat.qty + (q.type === 'in' ? qty : -qty))
     // 同步列表库存与汇总
     const idx = comps.value.findIndex(c => c.id === q.mat.id)
-    if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty: fresh.qty }
+    if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty: freshQty }
     const pidx = pageRows.value.findIndex(c => c.id === q.mat.id)
-    if (pidx >= 0) pageRows.value[pidx] = { ...pageRows.value[pidx], qty: fresh.qty }
-    q.mat = { ...q.mat, qty: fresh.qty }
+    if (pidx >= 0) pageRows.value[pidx] = { ...pageRows.value[pidx], qty: freshQty }
+    q.mat = { ...q.mat, qty: freshQty }
     const s = sumOf(q.mat.id)
     if (q.type === 'in') { s.total_in += qty; s.last30_in += qty }
     else { s.total_out += qty; s.last30_out += qty }

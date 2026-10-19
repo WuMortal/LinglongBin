@@ -1,15 +1,15 @@
 // Supabase 数据存储实现
 import { supabase } from '../supabase'
 import type {
-  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, BomProject, BomItem,
+  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, StockOrder, BomProject, BomItem,
   BomPickRecord, PurchaseOrder, PurchaseItem, MaterialFile, DictType, DictItem,
   LabelTemplate, StockTake, StockTakeItem, StagnantRow,
 } from '../types'
 import type {
-  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
-  VoidStockLogsInput, VoidStockLogsResult,
+  DataStore, ListMaterialsOpts,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
-  PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
+  PageResult, PurchaseOrderPageOpts,
+  StockOrderInput, StockOrderPageOpts,
 } from './types'
 import { DEFAULT_LABEL_LAYOUT, normalizeTemplate } from '../labelDefaults'
 
@@ -46,6 +46,19 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = []
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
   return out
+}
+
+/** 本地日期 yyyyMMdd（出入库单号用） */
+function yyyyMMdd(d = new Date()): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}${m}${day}`
+}
+
+/** stock_orders 行归一化：status 空值视为 normal（历史数据兜底） */
+function mapStockOrder(r: Record<string, unknown>): StockOrder {
+  const row = r as unknown as StockOrder
+  return { ...row, status: row.status === 'void' ? 'void' : 'normal' }
 }
 
 /** 把 Supabase 嵌套的 categories.parent.name 摊平为 categories.parent_name */
@@ -271,10 +284,12 @@ export class SupabaseStore implements DataStore {
     if (paramsValue !== undefined) {
       await this.saveMaterialParams(created.id, paramsValue, owner)
     }
-    // 初始库存 > 0 时写入一条入库流水（备注：初始入库）
+    // 初始库存 > 0 时生成一张初始入库单（1 单 1 明细，明细备注：初始入库）
     if ((payload.qty ?? 0) > 0) {
-      await supabase.from('stock_log').insert({
-        owner, material_id: created.id, type: 'in', qty: payload.qty, note: '初始入库',
+      await this.stockInOrder({
+        type: 'in', source: 'init', source_id: null,
+        title: '初始入库', supplier_id: null, note: null,
+        items: [{ material_id: created.id, qty: payload.qty ?? 0, note: '初始入库' }],
       })
     }
     return created
@@ -483,17 +498,6 @@ export class SupabaseStore implements DataStore {
   }
 
   // ===== 出入库 =====
-  async addStockLog(input: StockInput): Promise<StockLog> {
-    const base = { ...input, owner: await this.getOwnerId() }
-    // 云端未执行撤销字段迁移时降级写入（不阻断原有入库流程）
-    const tryInsert = async (payload: Record<string, unknown>) =>
-      supabase.from('stock_log').insert(payload).select().single()
-    let res = await tryInsert({ ...base, status: 'normal' })
-    if (res.error && isMissingVoidColumn(res.error.message)) res = await tryInsert(base)
-    if (res.error) throw res.error
-    return res.data as StockLog
-  }
-
   async listStockLog(opts: { limit?: number; materialId?: string; type?: 'in' | 'out' } = {}): Promise<StockLog[]> {
     const { limit = 100, materialId, type } = opts
     let q = supabase
@@ -505,53 +509,18 @@ export class SupabaseStore implements DataStore {
     if (type) q = q.eq('type', type)
     const { data, error } = await q
     if (error) throw error
-    return (data as StockLog[]) || []
-  }
-
-  async listStockLogPage(opts: StockLogPageOpts = {}): Promise<PageResult<StockLog>> {
-    const { type, keyword = '', status, from, to, limit = 20, offset = 0 } = opts
-    /*
-     * 关键词命中「物料名称 或 备注」。
-     * PostgREST 不允许在 or() 里把嵌入资源（materials.name）与顶层列混用（会 400），
-     * 所以先按名称查出物料 id，再全部用顶层条件组装。
-     */
-    const kw = keyword.trim()
-    let matIds: string[] = []
-    if (kw) {
-      const { data: ms } = await supabase
-        .from('materials').select('id').ilike('name', `%${kw}%`).limit(1000)
-      matIds = ((ms || []) as { id: string }[]).map(m => m.id)
+    const rows = ((data as StockLog[]) || []).map(r => ({ ...r, order_no: r.order_no ?? null }))
+    // 补查所属单号（云端未升级 stock_orders 表时静默跳过，单号留空）
+    const ids = [...new Set(rows.map(r => r.order_id).filter((x): x is string => !!x))]
+    if (ids.length) {
+      try {
+        const { data: os } = await supabase
+          .from('stock_orders').select('id, order_no').in('id', ids)
+        const noMap = new Map(((os || []) as { id: string; order_no: string | null }[]).map(o => [o.id, o.order_no]))
+        for (const r of rows) r.order_no = (r.order_id && noMap.get(r.order_id)) || null
+      } catch { /* 表不存在等 → 不展示单号 */ }
     }
-    const kwConds = kw
-      ? [...(matIds.length ? [`material_id.in.(${matIds.join(',')})`] : []), `note.ilike.%${kw}%`]
-      : []
-    // 历史数据 status 为空 → 视为有效
-    const stConds = status === 'void'
-      ? ['status.eq.void']
-      : status === 'normal' ? ['status.is.null', 'status.eq.normal'] : []
-    // PostgREST 只有一个 or 参数：两组条件用 and(...) 交叉组合
-    const orExpr = kwConds.length && stConds.length
-      ? kwConds.flatMap(k => stConds.map(s => `and(${k},${s})`)).join(',')
-      : [...kwConds, ...stConds].join(',')
-
-    /** withStatus=false：云端还没加撤销字段时，去掉状态条件重试 */
-    const run = async (withStatus: boolean) => {
-      let q = supabase
-        .from('stock_log')
-        .select('*, materials(name, model, package), suppliers(name)', { count: 'exact' })
-        .order('created_at', { ascending: false })
-      if (type) q = q.eq('type', type)
-      if (from) q = q.gte('created_at', from)
-      if (to) q = q.lte('created_at', to)
-      const expr = withStatus ? orExpr : kwConds.join(',')
-      if (expr) q = q.or(expr)
-      return q.range(offset, offset + limit - 1)
-    }
-
-    let res = await run(true)
-    if (res.error && stConds.length && isMissingVoidColumn(res.error.message)) res = await run(false)
-    if (res.error) throw res.error
-    return { rows: (res.data as StockLog[]) || [], total: res.count ?? 0 }
+    return rows
   }
 
   async stockSummary(): Promise<StockSummaryRow[]> {
@@ -579,27 +548,133 @@ export class SupabaseStore implements DataStore {
     return [...map.values()]
   }
 
-  async applyStock(input: ApplyStockInput): Promise<MaterialRow> {
-    if (input.type === 'out' && input.qty > (input.currentQty || 0))
-      throw new Error(`出库数量 ${input.qty} 超过当前库存 ${input.currentQty || 0}`)
-    const next = input.type === 'in'
-      ? (input.currentQty || 0) + input.qty
-      : (input.currentQty || 0) - input.qty
-    await this.addStockLog({
-      material_id: input.material_id, type: input.type, qty: input.qty,
-      supplier_id: input.supplier_id ?? null, note: input.note,
-    })
-    return await this.updateMaterial(input.material_id, { qty: next })
+  // ===== 出入库单（单据化） =====
+  /** legacy 流水聚合迁移（进程内只跑一次；失败允许下次重试） */
+  private orderMigrated: Promise<void> | null = null
+
+  private ensureOrderMigrated(): Promise<void> {
+    if (!this.orderMigrated) {
+      this.orderMigrated = (async () => { await this.migrateLegacyStockOrders() })()
+        .catch(() => { this.orderMigrated = null })
+    }
+    return this.orderMigrated
+  }
+
+  /** 生成出入库单号：RK(入)/CK(出) + 本地日期 + 4 位序号（当日同前缀最大值 + 1） */
+  private async nextOrderNo(type: 'in' | 'out', date: Date): Promise<string> {
+    const owner = await this.getOwnerId()
+    const prefix = `${type === 'in' ? 'RK' : 'CK'}${yyyyMMdd(date)}`
+    const { data, error } = await supabase
+      .from('stock_orders')
+      .select('order_no')
+      .eq('owner', owner)
+      .like('order_no', `${prefix}-%`)
+    if (error) throw error
+    let max = 0
+    for (const r of (data || []) as { order_no: string | null }[]) {
+      const n = Number.parseInt((r.order_no || '').slice(prefix.length + 1), 10)
+      if (Number.isFinite(n) && n > max) max = n
+    }
+    return `${prefix}-${String(max + 1).padStart(4, '0')}`
   }
 
   /**
-   * 批量出入库：库存基线按物料读库获取（不依赖前端缓存），同一物料多条流水
-   * 合并计算终值；一次批量 insert 写完全部流水，再按物料并发更新 qty。
-   * 任一物料库存不足 / 数量非法则整体抛错，不写任何数据。
+   * 历史流水聚合为 legacy 单（幂等：没有未挂单流水时直接返回）。
+   * 云端 DDL（stock_orders 表 / stock_log.order_id 列）由升级 SQL 脚本执行，
+   * 未升级时探测失败直接跳过，不阻塞启动。
+   * 规则（方案 B）：type 相同 + note 归一化相同 + 与上一条时间相邻 ≤ 60 秒 → 聚为一单。
    */
-  async applyStockBatch(items: ApplyStockBatchItem[]): Promise<Map<string, number>> {
-    if (!items.length) return new Map()
+  private async migrateLegacyStockOrders(): Promise<void> {
+    // 探测 order_id 列：缺失说明云端还没执行升级脚本
+    const probe = await supabase.from('stock_log').select('id').not('order_id', 'is', null).limit(1)
+    if (probe.error) return
+    const { count, error } = await supabase
+      .from('stock_log')
+      .select('id', { count: 'exact', head: true })
+      .is('order_id', null)
+    if (error || !count) return
+
+    // 分页拉全量未挂单流水（按时间正序）
+    interface LegacyRow {
+      id: string; type: 'in' | 'out'; qty: number; note: string | null
+      status: string | null; void_reason: string | null; voided_at: string | null
+      created_at: string
+    }
+    const rows: LegacyRow[] = []
+    const PAGE = 1000
+    for (let off = 0; ; off += PAGE) {
+      const { data, error: e } = await supabase
+        .from('stock_log')
+        .select('id,type,qty,note,status,void_reason,voided_at,created_at')
+        .is('order_id', null)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(off, off + PAGE - 1)
+      if (e) throw e
+      const page = (data || []) as LegacyRow[]
+      rows.push(...page)
+      if (page.length < PAGE) break
+    }
+    if (!rows.length) return
+
+    // 分组（与 SQLite 端同一规则）
+    const groups: LegacyRow[][] = []
+    let cur: LegacyRow[] = [rows[0]]
+    for (let i = 1; i < rows.length; i++) {
+      const prev = cur[cur.length - 1]
+      const gap = (Date.parse(rows[i].created_at) || 0) - (Date.parse(prev.created_at) || 0)
+      const sameKey = rows[i].type === prev.type
+        && (rows[i].note ?? '') === (prev.note ?? '')
+      if (sameKey && gap <= 60_000) cur.push(rows[i])
+      else { groups.push(cur); cur = [rows[i]] }
+    }
+    groups.push(cur)
+
+    for (const g of groups) {
+      const first = g[0]
+      const allVoid = g.every(x => x.status === 'void')
+      const orderId = crypto.randomUUID()
+      const orderNo = await this.nextOrderNo(first.type, new Date(first.created_at))
+      const { error: insErr } = await supabase.from('stock_orders').insert({
+        id: orderId, owner: await this.getOwnerId(),
+        order_no: orderNo, type: first.type, source: 'legacy',
+        source_id: null, title: first.note ?? null, supplier_id: null, note: first.note ?? null,
+        item_count: g.length, total_qty: g.reduce((s, x) => s + (Number(x.qty) || 0), 0),
+        status: allVoid ? 'void' : 'normal',
+        void_reason: allVoid ? (g.find(x => x.void_reason)?.void_reason ?? null) : null,
+        voided_at: allVoid ? (g.map(x => x.voided_at).filter(Boolean).sort().pop() ?? null) : null,
+        created_at: first.created_at,
+      })
+      if (insErr) throw insErr
+      // 只更新仍为 null 的流水：多端同时迁移时互不抢行
+      const { data: upd, error: updErr } = await supabase
+        .from('stock_log')
+        .update({ order_id: orderId })
+        .is('order_id', null)
+        .in('id', g.map(x => x.id))
+        .select('id')
+      if (updErr) throw updErr
+      // 整组都被其他端挂走：清理刚建的空单
+      if (!(upd || []).length) {
+        await supabase.from('stock_orders').delete().eq('id', orderId)
+      }
+    }
+  }
+
+  /**
+   * 建单并批量入账：一次出入库 = 1 单 N 明细。
+   * 先全量校验（物料存在、数量 > 0、出库不超库存）→ 建单 → 批量写明细 →
+   * 并发更新库存；任一步失败清理已写数据后抛错（PostgREST 无事务，validate-then-write 反向补偿）。
+   * 明细写入对 stock_log.order_id 缺列做降级（与撤销字段一致的容错策略）。
+   */
+  async stockInOrder(input: StockOrderInput): Promise<{ order: StockOrder; finals: Map<string, number> }> {
+    const items = input.items ?? []
+    if (!items.length) throw new Error('出入库明细不能为空')
+    await this.ensureOrderMigrated()
     const owner = await this.getOwnerId()
+    const createdAt = input.created_at ?? new Date().toISOString()
+
+    // ---- 校验 + 终值计算（按物料累加，不依赖前端缓存） ----
     const ids = [...new Set(items.map(i => i.material_id))]
     const { data: matsRaw, error: eMats } = await supabase
       .from('materials')
@@ -610,103 +685,210 @@ export class SupabaseStore implements DataStore {
     const byId = new Map((matsRaw || []).map(m => [m.id, m]))
     if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
 
-    // 累加校验：出库超出当前库存整体拦截（负库存兜底）
     const finals = new Map<string, number>()
+    let totalQty = 0
     for (const it of items) {
       if (!(it.qty > 0)) throw new Error('出入库数量必须大于 0')
       const base = finals.get(it.material_id) ?? (Number(byId.get(it.material_id)?.qty) || 0)
-      const next = base + (it.type === 'in' ? it.qty : -it.qty)
+      const next = base + (input.type === 'in' ? it.qty : -it.qty)
       if (next < 0) {
         const name = byId.get(it.material_id)?.name ?? it.material_id
         throw new Error(`「${name}」出库数量 ${it.qty} 超过当前库存 ${base}`)
       }
       finals.set(it.material_id, next)
+      totalQty += it.qty
     }
 
-    // 批量请求写完全部流水（分块提交，控制单次载荷）
-    // 云端未执行撤销字段迁移时降级写入（与 addStockLog 一致）
+    // ---- 建单 ----
+    const orderId = crypto.randomUUID()
+    const orderNo = await this.nextOrderNo(input.type, new Date(createdAt))
+    const insOrder = await supabase
+      .from('stock_orders')
+      .insert({
+        id: orderId, owner, order_no: orderNo, type: input.type, source: input.source,
+        source_id: input.source_id ?? null, title: input.title ?? null,
+        supplier_id: input.supplier_id ?? null, note: input.note ?? null,
+        item_count: items.length, total_qty: totalQty,
+        status: 'normal', created_at: createdAt,
+      })
+      .select('*, suppliers(name)')
+      .single()
+    if (insOrder.error) throw insOrder.error
+
+    // ---- 明细流水 + 库存更新（失败清理） ----
     const logs = items.map(it => ({
-      owner, material_id: it.material_id, type: it.type, qty: it.qty,
-      supplier_id: it.type === 'in' ? (it.supplier_id ?? null) : null,
-      note: it.note ?? null, status: 'normal',
+      owner, material_id: it.material_id, type: input.type, qty: it.qty, order_id: orderId,
+      supplier_id: input.type === 'in' ? (it.supplier_id ?? input.supplier_id ?? null) : null,
+      note: it.note ?? null, status: 'normal', created_at: createdAt,
     }))
     const CHUNK = 500
-    for (let i = 0; i < logs.length; i += CHUNK) {
-      const chunk = logs.slice(i, i + CHUNK)
-      let res = await supabase.from('stock_log').insert(chunk)
-      if (res.error && isMissingVoidColumn(res.error.message)) {
-        res = await supabase.from('stock_log').insert(chunk.map(({ status: _s, ...l }) => l))
+    try {
+      for (let i = 0; i < logs.length; i += CHUNK) {
+        const chunkRows = logs.slice(i, i + CHUNK)
+        let res = await supabase.from('stock_log').insert(chunkRows)
+        if (res.error && isMissingVoidColumn(res.error.message)) {
+          // 云端尚未加 order_id 列：降级写入（流水不挂单，升级后由 legacy 迁移聚合）
+          res = await supabase.from('stock_log').insert(chunkRows.map(({ order_id: _o, ...l }) => l))
+        }
+        if (res.error) throw res.error
       }
-      if (res.error) throw res.error
+      const updates = [...finals.entries()].map(async ([id, qty]) => {
+        const { error } = await supabase.from('materials').update({ qty }).eq('id', id)
+        if (error) throw error
+      })
+      await Promise.all(updates)
+    } catch (e) {
+      // 反向补偿：不留半单（无事务，失败时删除已写数据）
+      await supabase.from('stock_log').delete().eq('order_id', orderId)
+      await supabase.from('stock_orders').delete().eq('id', orderId)
+      throw e
     }
-
-    // 按物料并发更新库存（去重后的物料，请求数远少于流水条数）
-    const updates = [...finals.entries()].map(async ([id, qty]) => {
-      const { error } = await supabase.from('materials').update({ qty }).eq('id', id)
-      if (error) throw error
-    })
-    await Promise.all(updates)
-    return finals
+    return { order: mapStockOrder(insOrder.data as Record<string, unknown>), finals }
   }
 
-  /** 单条撤销的内部实现：校验状态 → 回滚库存 → 置为已撤销 */
-  private async voidOneStockLog(id: string, reason: string | null): Promise<void> {
-    const { data: row, error: e0 } = await supabase
-      .from('stock_log')
-      .select('*, materials(name, model, package), suppliers(name)')
+  /** 读单条出入库单 */
+  async getStockOrder(id: string): Promise<StockOrder> {
+    const { data, error } = await supabase
+      .from('stock_orders')
+      .select('*, suppliers(name)')
       .eq('id', id)
-      .maybeSingle()
-    if (e0) throw e0
-    if (!row) throw new Error('记录不存在')
-    const log = row as StockLog
-    if (log.status === 'void') throw new Error('该记录已撤销，无法重复操作')
-
-    // 库存回滚：撤销入库 → 扣回数量；撤销出库 → 加回数量
-    if (log.material_id) {
-      const mats = await this.getMaterialsByIds([log.material_id])
-      if (mats.length) {
-        const cur = Number(mats[0].qty) || 0
-        if (log.type === 'in' && log.qty > cur)
-          throw new Error(`当前库存 ${cur} 不足，无法撤销本次入库 ${log.qty}`)
-        await this.updateMaterial(log.material_id, {
-          qty: log.type === 'in' ? cur - log.qty : cur + log.qty,
-        })
-      }
-    }
-
-    const { error } = await supabase
-      .from('stock_log')
-      .update({ status: 'void', void_reason: reason, voided_at: new Date().toISOString() })
-      .eq('id', id)
+      .single()
     if (error) throw error
+    return mapStockOrder(data as Record<string, unknown>)
   }
 
-  async voidStockLog(input: VoidStockLogInput): Promise<StockLog> {
-    await this.voidOneStockLog(input.id, input.reason?.trim() || null)
+  async pageStockOrders(opts: StockOrderPageOpts = {}): Promise<PageResult<StockOrder>> {
+    await this.ensureOrderMigrated()
+    const { type, source, keyword = '', status, from, to, limit = 20, offset = 0 } = opts
+    /*
+     * 关键词多词 OR 并集（与首页搜索一致）。PostgREST 不允许 or() 里混用嵌入资源，
+     * 明细物料命中分两步：先按词查物料 id，再查这些物料挂到的单据 id，全部拼成顶层条件。
+     */
+    const kws = keyword.trim() ? keyword.trim().split(/[\s,，]+/).filter(Boolean) : []
+    const orParts: string[] = []
+    for (const kw of kws) {
+      const k = escOrVal(kw)
+      const parts = [`order_no.ilike.%${k}%`, `title.ilike.%${k}%`, `note.ilike.%${k}%`]
+      // 明细物料名 / 型号 / 编号 → 单据 id 集合
+      const { data: ms } = await supabase
+        .from('materials')
+        .select('id')
+        .is('deleted_at', null)
+        .or(`name.ilike.%${k}%,model.ilike.%${k}%,part_no.ilike.%${k}%`)
+        .limit(1000)
+      const matIds = ((ms || []) as { id: string }[]).map(m => m.id)
+      if (matIds.length) {
+        const { data: ls } = await supabase
+          .from('stock_log')
+          .select('order_id')
+          .in('material_id', matIds)
+          .not('order_id', 'is', null)
+          .limit(1000)
+        const orderIds = [...new Set(((ls || []) as { order_id: string }[]).map(l => l.order_id))]
+        if (orderIds.length) parts.push(`id.in.(${orderIds.join(',')})`)
+      }
+      orParts.push(parts.join(','))
+    }
+
+    const run = async (withOr: boolean) => {
+      let q = supabase
+        .from('stock_orders')
+        .select('*, suppliers(name)', { count: 'exact' })
+        .order('created_at', { ascending: false })
+      if (type) q = q.eq('type', type)
+      if (source) q = q.eq('source', source)
+      // 历史数据 status 可能为空：空值视为有效（normal）
+      if (status) q = status === 'void' ? q.eq('status', 'void') : q.neq('status', 'void')
+      if (from) q = q.gte('created_at', from)
+      if (to) q = q.lte('created_at', to)
+      if (withOr && orParts.length) q = q.or(orParts.join(','))
+      return q.range(offset, offset + limit - 1)
+    }
+
+    let res = await run(true)
+    // 云端未升级（stock_orders 表不存在）时降级：不带关键词条件重试一次
+    if (res.error && orParts.length && isMissingVoidColumn(res.error.message)) res = await run(false)
+    if (res.error) throw res.error
+    const rows = ((res.data || []) as Record<string, unknown>[]).map(mapStockOrder)
+    return { rows, total: res.count ?? 0 }
+  }
+
+  async listStockLogsByOrder(orderId: string): Promise<StockLog[]> {
     const { data, error } = await supabase
       .from('stock_log')
       .select('*, materials(name, model, package), suppliers(name)')
-      .eq('id', input.id)
-      .single()
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
     if (error) throw error
-    return data as StockLog
+    return (data as StockLog[]) || []
   }
 
-  async voidStockLogs(input: VoidStockLogsInput): Promise<VoidStockLogsResult> {
-    const reason = input.reason?.trim() || null
-    let done = 0
-    const failedIds: string[] = []
-    const errors: string[] = []
-    for (const id of input.ids ?? []) {
-      try {
-        await this.voidOneStockLog(id, reason)
-        done++
-      } catch (e: unknown) {
-        failedIds.push(id)
-        errors.push((e as Error)?.message || '撤销失败')
+  /**
+   * 撤销整单：先全量校验（每个物料回滚后不得为负）后执行，任一明细失败整单报错，
+   * 不存在「部分撤销」状态；物料已删除的明细跳过回滚（软删物料库存无意义）。
+   */
+  async voidStockOrder(id: string, reason: string): Promise<void> {
+    const { data: orderRaw, error: eOrder } = await supabase
+      .from('stock_orders')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+    if (eOrder) throw eOrder
+    if (!orderRaw) throw new Error('单据不存在')
+    const order = mapStockOrder(orderRaw as Record<string, unknown>)
+    if (order.status === 'void') throw new Error('该单据已撤销，无法重复操作')
+    const why = reason?.trim() || null
+    const voidedAt = new Date().toISOString()
+
+    // 参与回滚的明细 = 该单下仍有效的流水
+    const { data: logsRaw, error: eLogs } = await supabase
+      .from('stock_log')
+      .select('id, material_id, type, qty, status')
+      .eq('order_id', id)
+      .order('created_at', { ascending: true })
+    if (eLogs) throw eLogs
+    const logs = ((logsRaw || []) as StockLog[]).filter(l => l.status !== 'void')
+
+    if (logs.length) {
+      // 回滚增量：撤销入库 → 扣回；撤销出库 → 加回（按物料聚合）
+      const deltas = new Map<string, number>()
+      for (const l of logs) {
+        if (!l.material_id) continue
+        const d = deltas.get(l.material_id) ?? 0
+        deltas.set(l.material_id, d + (l.type === 'in' ? -l.qty : l.qty))
       }
+      const mats = await this.getMaterialsByIds([...deltas.keys()])
+      const byId = new Map(mats.map(m => [m.id, m]))
+
+      // ---- 全量校验：物料存在且回滚后不为负 ----
+      const rollbackList: Array<{ id: string; qty: number }> = []
+      for (const [mid, delta] of deltas) {
+        const mat = byId.get(mid)
+        if (!mat) continue // 物料已软删：跳过回滚，不阻塞整单撤销
+        const cur = Number(mat.qty) || 0
+        if (cur + delta < 0) {
+          throw new Error(`「${mat.name}」当前库存 ${cur}，整单撤销后将变为负数，无法撤销`)
+        }
+        rollbackList.push({ id: mid, qty: cur + delta })
+      }
+      // ---- 执行：先回滚库存，再置流水与单据撤销 ----
+      await Promise.all(rollbackList.map(async r => {
+        const { error } = await supabase.from('materials').update({ qty: r.qty }).eq('id', r.id)
+        if (error) throw error
+      }))
     }
-    return { done, failedIds, errors }
+
+    await supabase
+      .from('stock_log')
+      .update({ status: 'void', void_reason: why, voided_at: voidedAt })
+      .eq('order_id', id)
+      .neq('status', 'void')
+    const { error: eVoid } = await supabase
+      .from('stock_orders')
+      .update({ status: 'void', void_reason: why, voided_at: voidedAt })
+      .eq('id', id)
+    if (eVoid) throw eVoid
   }
 
   // ===== 库存盘点 =====

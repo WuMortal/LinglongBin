@@ -71,7 +71,7 @@ export interface MaterialDraft {
   part_no: string | null
   category_id: string | null
   params: Record<string, unknown>
-  /** 初始库存 > 0 时，落库后走 applyStock 入库（产生流水） */
+  /** 初始库存 > 0 时，落库后走 stockInOrder 自动生成「初始入库」单（产生流水） */
   qty: number
   location: string | null
   price: number
@@ -109,7 +109,49 @@ export interface StockLog {
   void_reason?: string | null
   /** 撤销时间 */
   voided_at?: string | null
+  /** 所属出入库单（legacy 旧数据可能为空） */
+  order_id?: string | null
+  /** 所属单号（冗余展示用，联表带出） */
+  order_no?: string | null
   materials?: { name: string | null; model: string | null; package: string | null } | null
+  suppliers?: { name: string | null } | null
+}
+
+/** 出入库单来源 */
+export type StockOrderSource =
+  | 'manual'    // 手工出入库（卡片 ⇄ / 库存页）
+  | 'init'      // 新建物料初始库存
+  | 'import'    // 订单导入入库
+  | 'bom'       // BOM 领料出库
+  | 'purchase'  // 待采单完成采购入库
+  | 'stocktake' // 盘点差异调整（盘盈 in / 盘亏 out）
+  | 'legacy'    // 历史流水迁移归并的旧单
+
+/** 出入库单：先有单，再有明细（stock_log.order_id 挂单） */
+export interface StockOrder {
+  id: string
+  owner: string
+  /** 单号：RK20261019-0001（入库）/ CK20261019-0002（出库），按类型+日期递增；legacy 单按流水原始日期编号 */
+  order_no: string | null
+  type: 'in' | 'out'
+  source: StockOrderSource
+  /** 关联业务单 id：BOM 领料记录 / 待采单 / 盘点单 */
+  source_id: string | null
+  /** 摘要标题：如「订单导入：xxx.xls」「BOM 领料：项目A（2 套）」 */
+  title: string | null
+  /** 供应商（入库单记单级） */
+  supplier_id: string | null
+  note: string | null
+  /** 明细条数（冗余，列表免 count） */
+  item_count: number
+  /** 数量合计（冗余） */
+  total_qty: number
+  /** normal = 有效 | void = 已整单撤销（明细全部 void） */
+  status: 'normal' | 'void'
+  void_reason: string | null
+  voided_at: string | null
+  created_at: string
+  /** 列表联查：供应商名称 */
   suppliers?: { name: string | null } | null
 }
 

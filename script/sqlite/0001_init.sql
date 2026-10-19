@@ -36,6 +36,7 @@ drop table if exists material_params;
 drop table if exists material_files;
 drop table if exists category_params;
 drop table if exists stock_log;
+drop table if exists stock_orders;
 drop table if exists label_templates;
 drop table if exists materials;
 drop table if exists suppliers;
@@ -132,11 +133,31 @@ create table if not exists material_params (
   unique (material_id, param_key)
 );
 
--- 4) 出入库流水
+-- 4) 出入库单（主表）：一次出入库 = 1 单 N 明细（明细即 stock_log 挂 order_id）
+create table if not exists stock_orders (
+  id           text        primary key,
+  owner        text        not null,
+  order_no     text,                                          -- 单号：RK(入)/CK(出) + yyyyMMdd + 4 位序号
+  type         text        not null check (type in ('in','out')),
+  source       text        not null default 'manual',          -- manual | init | import | bom | purchase | stocktake | legacy
+  source_id    text,                                          -- 关联业务单 id（BOM 领料记录 / 待采单 / 盘点单）
+  title        text,                                          -- 摘要标题（如「订单导入：xxx.xls」）
+  supplier_id  text        references suppliers(id) on delete set null,  -- 单级供应商（入库常用）
+  note         text,
+  item_count   integer     not null default 0,                 -- 明细条数（冗余，列表展示用）
+  total_qty    integer     not null default 0,                 -- 明细数量合计（冗余，列表展示用）
+  status       text        default 'normal',                  -- normal = 有效 | void = 已撤销
+  void_reason  text,
+  voided_at    text,
+  created_at   text        default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- 4.1) 出入库流水（明细）
 create table if not exists stock_log (
   id            text        primary key,
   owner         text        not null,
   material_id   text        references materials(id) on delete cascade,
+  order_id      text        references stock_orders(id) on delete set null,  -- 所属出入库单（legacy 旧数据为空）
   type          text        not null check (type in ('in','out')),
   qty           integer     not null,
   supplier_id   text        references suppliers(id) on delete set null,   -- 供应商（type=in 时记录）
@@ -147,7 +168,7 @@ create table if not exists stock_log (
   created_at    text        default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- 5) 库存盘点（主表 + 明细）：差异在提交时通过 applyStock 入账
+-- 5) 库存盘点（主表 + 明细）：差异在提交时通过 stockInOrder 入账（盘盈 in / 盘亏 out 各建一张单）
 create table if not exists stocktakes (
   id            text        primary key,
   owner         text        not null,
@@ -283,6 +304,9 @@ create index if not exists idx_materials_category on materials(category_id);
 create index if not exists idx_matparams_mat      on material_params(material_id);
 create index if not exists idx_matfiles_mat       on material_files(material_id);
 create index if not exists idx_stocklog_owner      on stock_log(owner, created_at);
+create index if not exists idx_stockorders_owner   on stock_orders(owner, created_at);
+create index if not exists idx_stockorders_no      on stock_orders(owner, order_no);
+create index if not exists idx_stocklog_order      on stock_log(order_id);
 create index if not exists idx_stocktakes_owner     on stocktakes(owner);
 create index if not exists idx_stocktake_items_take on stocktake_items(take_id);
 create index if not exists idx_bomitems_project    on bom_items(project_id);

@@ -4,16 +4,16 @@
 // 切换在线/离线模式只需改 .env 的 VITE_DATA_MODE，调用方无感知。
 import { getStore, type DataStore } from './storage'
 import type {
-  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, BomProject, BomItem,
+  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, StockOrder, BomProject, BomItem,
   BomPickRecord, PurchaseOrder, PurchaseItem, MaterialFile, DictType, DictItem, LabelTemplate,
   LabelCatConfig, LabelSheetLayout,
   StockTake, StockTakeItem, StagnantRow,
 } from './types'
 import type {
-  ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
-  VoidStockLogsInput, VoidStockLogsResult,
+  ListMaterialsOpts,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
-  PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
+  PageResult, PurchaseOrderPageOpts,
+  StockOrderInput, StockOrderPageOpts,
 } from './storage'
 import { LCSC_CATEGORIES } from './lcscCategories'
 import type { LcscParam } from './lcscCategories'
@@ -569,14 +569,15 @@ export async function openExternal(target: string, isPath: boolean): Promise<voi
   window.open(target, '_blank', 'noopener')
 }
 
-export const addStockLog = (input: StockInput): Promise<StockLog> => s.addStockLog(input)
 export const listStockLog = (opts?: { limit?: number; materialId?: string; type?: 'in' | 'out' }): Promise<StockLog[]> => s.listStockLog(opts)
-export const listStockLogPage = (opts?: StockLogPageOpts): Promise<PageResult<StockLog>> => s.listStockLogPage(opts)
-export const applyStock = (input: ApplyStockInput): Promise<MaterialRow> => s.applyStock(input)
-export const applyStockBatch = (items: ApplyStockBatchItem[]): Promise<Map<string, number>> => s.applyStockBatch(items)
-export const voidStockLog = (input: VoidStockLogInput): Promise<StockLog> => s.voidStockLog(input)
-export const voidStockLogs = (input: VoidStockLogsInput): Promise<VoidStockLogsResult> => s.voidStockLogs(input)
 export const stockSummary = (): Promise<StockSummaryRow[]> => s.stockSummary()
+
+// ===== 出入库单（单据化：一次出入库 = 1 单 N 明细） =====
+export const stockInOrder = (input: StockOrderInput): Promise<{ order: StockOrder; finals: Map<string, number> }> => s.stockInOrder(input)
+export const getStockOrder = (id: string): Promise<StockOrder> => s.getStockOrder(id)
+export const pageStockOrders = (opts?: StockOrderPageOpts): Promise<PageResult<StockOrder>> => s.pageStockOrders(opts)
+export const listStockLogsByOrder = (orderId: string): Promise<StockLog[]> => s.listStockLogsByOrder(orderId)
+export const voidStockOrder = (id: string, reason: string): Promise<void> => s.voidStockOrder(id, reason)
 
 export const createBomProject = (name: string): Promise<BomProject> => s.createBomProject(name)
 export const listBomProjects = (): Promise<BomProject[]> => s.listBomProjects()
@@ -612,20 +613,25 @@ export const stagnantMaterials = (days?: number): Promise<StagnantRow[]> => s.st
 export const stockTrend = (days?: number): Promise<TrendRow[]> => s.stockTrend(days)
 
 // ===== 库存盘点 =====
-// 建盘点单 + 明细；差异在提交时按行通过 applyStock 入账（盘盈=in / 盘亏=out，note='盘点调整'），
-// 因此完整复用在线模式审核逻辑与库存更新。
+// 建盘点单 + 明细；差异按单据化入账：盘盈一张入库单（in）、盘亏一张出库单（out），
+// 均挂 source=stocktake / source_id=盘点单 id，明细备注「盘点调整」。
 export async function createStocktake(take: StockTake, items: StockTakeItem[]): Promise<void> {
   await s.createStocktake(take, items)
-  for (const it of items) {
-    if (it.material_id && it.diff !== 0) {
-      await s.applyStock({
-        material_id: it.material_id,
-        type: it.diff > 0 ? 'in' : 'out',
-        qty: Math.abs(it.diff),
-        note: '盘点调整',
-        currentQty: it.book_qty,
-      })
-    }
+  const gains = items.filter(it => it.material_id && it.diff > 0)
+    .map(it => ({ material_id: it.material_id!, qty: Math.abs(it.diff), note: '盘点调整' }))
+  const losses = items.filter(it => it.material_id && it.diff < 0)
+    .map(it => ({ material_id: it.material_id!, qty: Math.abs(it.diff), note: '盘点调整' }))
+  if (gains.length) {
+    await s.stockInOrder({
+      type: 'in', source: 'stocktake', source_id: take.id,
+      title: `盘点：${take.name}`, note: '盘点调整', items: gains,
+    })
+  }
+  if (losses.length) {
+    await s.stockInOrder({
+      type: 'out', source: 'stocktake', source_id: take.id,
+      title: `盘点：${take.name}`, note: '盘点调整', items: losses,
+    })
   }
 }
 export const listStocktakes = (): Promise<StockTake[]> => s.listStocktakes()
@@ -639,4 +645,4 @@ export const updateLabelTemplate = (id: string, patch: Partial<LabelTemplate>): 
 export const deleteLabelTemplate = (id: string): Promise<void> => s.deleteLabelTemplate(id)
 
 // re-export 类型供调用方使用
-export type { Category, CategoryParam, SupplierRow, MaterialRow, StockLog, BomProject, BomItem, BomPickRecord, PurchaseOrder, PurchaseItem, MaterialFile, DictType, DictItem, StockTake, StockTakeItem } from './types'
+export type { Category, CategoryParam, SupplierRow, MaterialRow, StockLog, StockOrder, BomProject, BomItem, BomPickRecord, PurchaseOrder, PurchaseItem, MaterialFile, DictType, DictItem, StockTake, StockTakeItem } from './types'

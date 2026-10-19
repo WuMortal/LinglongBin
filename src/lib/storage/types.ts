@@ -1,7 +1,7 @@
 // 数据存储抽象层接口
 // Supabase（在线）与 SQLite（离线）各自实现，db.ts 门面按配置选择
 import type {
-  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, BomProject, BomItem,
+  Category, CategoryParam, SupplierRow, MaterialRow, StockLog, StockOrder, BomProject, BomItem,
   BomPickRecord, PurchaseOrder, PurchaseItem, MaterialFile, DictType, DictItem,
   LabelTemplate, StockTake, StockTakeItem, StagnantRow,
 } from '../types'
@@ -27,21 +27,6 @@ export interface PageResult<T> {
   total: number
 }
 
-/** 出入库记录分页查询参数（筛选均在服务端完成） */
-export interface StockLogPageOpts {
-  type?: 'in' | 'out'
-  /** 关键词（模糊匹配物料名称 materials.name 或备注 stock_log.note） */
-  keyword?: string
-  /** 记录状态：normal = 有效 | void = 已撤销；不传 = 全部 */
-  status?: 'normal' | 'void'
-  /** 起始时间（ISO 字符串，含当天 00:00） */
-  from?: string
-  /** 结束时间（ISO 字符串，含当天 23:59:59） */
-  to?: string
-  limit?: number
-  offset?: number
-}
-
 /** 待采购单分页查询参数 */
 export interface PurchaseOrderPageOpts {
   status?: 'pending' | 'done' | null
@@ -49,55 +34,43 @@ export interface PurchaseOrderPageOpts {
   offset?: number
 }
 
-/** 出入库输入 */
-export interface StockInput {
-  material_id: string
-  type: 'in' | 'out'
-  qty: number
-  /** 入库时记录的供应商（type=in 时有效） */
-  supplier_id?: string | null
-  note: string | null
+/** 出入库单分页查询参数 */
+export interface StockOrderPageOpts {
+  type?: 'in' | 'out'
+  source?: import('../types').StockOrderSource
+  /** 关键词（模糊匹配单号 / 标题 / 备注 / 明细物料名 / 型号 / 编号） */
+  keyword?: string
+  status?: 'normal' | 'void'
+  from?: string
+  to?: string
+  limit?: number
+  offset?: number
 }
 
-/** 出入库并更新库存 */
-export interface ApplyStockInput extends StockInput {
-  currentQty: number
-}
-
-/** 批量出入库单项（导入入库等场景）：库存基线由 store 读库获取，不依赖前端缓存 */
-export interface ApplyStockBatchItem {
+/** 出入库单明细 */
+export interface StockOrderItem {
   material_id: string
-  type: 'in' | 'out'
+  /** 数量恒为正，方向由单据 type 决定 */
   qty: number
-  /** 入库时记录的供应商（type=in 时有效） */
+  /** 明细级供应商（导入等场景各行不同）；手工出入库建议放单级 supplier_id */
   supplier_id?: string | null
   note?: string | null
 }
 
-/** 撤销出入库输入 */
-export interface VoidStockLogInput {
-  /** 流水 id */
-  id: string
-  /** 撤销原因（必填，便于追溯） */
-  reason: string
-}
-
-/** 批量撤销出入库输入 */
-export interface VoidStockLogsInput {
-  /** 流水 id 列表 */
-  ids: string[]
-  /** 撤销原因（批量共用一条） */
-  reason: string
-}
-
-/** 批量撤销结果：逐条执行，单条失败不影响其余 */
-export interface VoidStockLogsResult {
-  /** 成功撤销条数 */
-  done: number
-  /** 撤销失败的流水 id */
-  failedIds: string[]
-  /** 失败原因（与 failedIds 一一对应） */
-  errors: string[]
+/** 建单并批量入账（一次出入库 = 一单 N 明细） */
+export interface StockOrderInput {
+  type: 'in' | 'out'
+  source: import('../types').StockOrderSource
+  /** 关联业务单 id（BOM 领料记录 / 待采单 / 盘点单） */
+  source_id?: string | null
+  /** 摘要标题 */
+  title?: string | null
+  /** 单级供应商（入库常用） */
+  supplier_id?: string | null
+  note?: string | null
+  /** 单据时间（缺省取当前时间；迁移历史数据时传原始时间） */
+  created_at?: string
+  items: StockOrderItem[]
 }
 
 /** 图片上传结果 */
@@ -202,22 +175,24 @@ export interface DataStore {
   localFilePath?(path: string): string | null
 
   // ===== 出入库 =====
-  addStockLog(input: StockInput): Promise<StockLog>
   listStockLog(opts?: { limit?: number; materialId?: string; type?: 'in' | 'out' }): Promise<StockLog[]>
-  /** 出入库记录分页（筛选 + 总数，避免云端一次性拉全表） */
-  listStockLogPage(opts?: StockLogPageOpts): Promise<PageResult<StockLog>>
-  applyStock(input: ApplyStockInput): Promise<MaterialRow>
-  /**
-   * 批量出入库：一次写完所有流水并按物料聚合更新库存，减少网络往返。
-   * 返回 material_id → 入账后最新库存 的映射；任一物料库存不足则整体抛错不落库。
-   */
-  applyStockBatch(items: ApplyStockBatchItem[]): Promise<Map<string, number>>
-  /** 撤销出入库：流水保留但置为已撤销，库存反向回滚 */
-  voidStockLog(input: VoidStockLogInput): Promise<StockLog>
-  /** 批量撤销出入库：共用一条原因，逐条撤销并回滚库存 */
-  voidStockLogs(input: VoidStockLogsInput): Promise<VoidStockLogsResult>
   /** 按物料聚合的出入库汇总（累计 + 近30天） */
   stockSummary(): Promise<StockSummaryRow[]>
+
+  // ===== 出入库单（单据化） =====
+  /**
+   * 建单并批量入账：一次出入库 = 1 单 N 明细。
+   * 生成单号、写 stock_orders、流水挂 order_id、按物料聚合更新库存；
+   * 任一物料库存不足则整体抛错不落库（失败时清理已写入数据）。
+   * 返回单据 + material_id → 入账后最新库存 映射。
+   */
+  stockInOrder(input: StockOrderInput): Promise<{ order: StockOrder; finals: Map<string, number> }>
+  /** 出入库单分页（服务端筛选 + 总数，关键词含明细物料名/型号/编号） */
+  pageStockOrders(opts?: StockOrderPageOpts): Promise<PageResult<StockOrder>>
+  /** 某张单的全部明细流水（按时间正序） */
+  listStockLogsByOrder(orderId: string): Promise<StockLog[]>
+  /** 撤销整单：先全量校验（回滚后不得出现负库存）后执行，任一明细失败则整单报错、不做部分撤销 */
+  voidStockOrder(id: string, reason: string): Promise<void>
 
   // ===== BOM =====
   createBomProject(name: string): Promise<BomProject>

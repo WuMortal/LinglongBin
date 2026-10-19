@@ -14,50 +14,33 @@
       </div>
       <div class="f-search">
         <Search :size="15" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
-        <input v-model="logKw" placeholder="搜索物料名称 / 备注" />
-      </div>
-
-      <!-- 多选操作：固定在筛选行右侧 -->
-      <div class="sel-group">
-        <label class="sel-all">
-          <input class="row-check" type="checkbox" :checked="allPageChecked" :indeterminate="pageIndeterminate"
-            @change="toggleAllPage" />
-          全选本页
-        </label>
-        <template v-if="selected.length">
-          <span class="sel-count">已选 <b>{{ selected.length }}</b> 条</span>
-          <button class="btn btn-ghost btn-sm" @click="clearSelection">清空</button>
-          <button class="btn btn-danger btn-sm" :disabled="voidBusy" @click="openVoidSelected">
-            <Undo2 :size="13" style="display: inline-flex; flex-shrink: 0" /> 批量撤销
-          </button>
-        </template>
+        <input v-model="logKw" placeholder="搜索单号 / 标题 / 物料" />
       </div>
     </div>
 
     <div class="logs-wrap">
-      <EmptyState v-if="!logRows.length" :icon="Inbox" title="暂无出入库记录" />
+      <EmptyState v-if="!orders.length && !logLoading" :icon="Inbox" title="暂无出入库单" />
       <ul v-else class="log-list">
-        <li v-for="r in logRows" :key="r.id"
-          :class="[r.type, { 'is-void': r.status === 'void', 'is-sel': isSelected(r.id) }]">
-          <div class="cb">
-            <input class="row-check" type="checkbox" :checked="isSelected(r.id)" :disabled="r.status === 'void'"
-              :title="r.status === 'void' ? '已撤销的记录无需再撤销' : '选择该记录'" @change="toggleRow(r.id)" />
-          </div>
-          <div class="tag-wrap"><span class="tag">{{ r.type === 'in' ? '入' : '出' }}</span></div>
+        <li v-for="o in orders" :key="o.id"
+          :class="[o.type, { 'is-void': o.status === 'void' }]" @click="curOrder = o">
+          <div class="tag-wrap"><span class="tag">{{ o.type === 'in' ? '入' : '出' }}</span></div>
           <div class="info">
-            <strong>{{ r.materials?.name || '已删除物料' }}</strong>
-            <small><template v-if="r.type === 'in' && r.suppliers?.name">{{ r.suppliers.name }} · </template>{{
-              r.materials?.model || '' }}<template v-if="r.note"> · {{ r.note }}</template></small>
-            <small v-if="r.status === 'void'" class="void-reason">
+            <strong>{{ o.title || o.note || (o.type === 'in' ? '入库单' : '出库单') }}</strong>
+            <small>
+              <span class="no">{{ o.order_no || '无单号' }}</span> · {{ sourceLabel(o.source) }}
+              <template v-if="o.suppliers?.name"> · {{ o.suppliers.name }}</template>
+              · {{ o.item_count }} 项
+            </small>
+            <small v-if="o.status === 'void'" class="void-reason">
               <Ban :size="11" style="display: inline-flex; flex-shrink: 0" />
-              已撤销<template v-if="r.void_reason">：{{ r.void_reason }}</template>
+              已撤销<template v-if="o.void_reason">：{{ o.void_reason }}</template>
             </small>
           </div>
-          <span class="q">{{ r.type === 'in' ? '+' : '-' }}{{ r.qty }}</span>
-          <time>{{ fmtFull(r.created_at) }}</time>
-          <div class="op">
-            <button v-if="r.status !== 'void'" class="btn btn-ghost btn-sm void-btn" :disabled="voidBusy"
-              title="撤销该记录（库存同步回滚）" @click="openVoid(r)">
+          <span class="q">{{ o.type === 'in' ? '+' : '-' }}{{ o.total_qty }}</span>
+          <time>{{ fmtFull(o.created_at) }}</time>
+          <div class="op" @click.stop>
+            <button v-if="o.status !== 'void'" class="btn btn-ghost btn-sm void-btn" :disabled="voidBusy"
+              title="撤销整单（库存同步回滚）" @click="openVoid(o)">
               <Undo2 :size="13" style="display: inline-flex; flex-shrink: 0" /> 撤销
             </button>
             <span v-else class="void-chip">已撤销</span>
@@ -69,38 +52,30 @@
     <Pager :page="logPage" :page-size="logPageSize" :total="logTotal" @change="onLogPage"
       @update:page-size="onLogSize" />
 
-    <!-- 撤销出入库：填写撤销原因后确认，流水保留、库存回滚 -->
+    <!-- 单据明细抽屉：点击单据行打开 -->
+    <StockOrderDrawer :order="curOrder" @close="curOrder = null" @void="openVoidFromDrawer" />
+
+    <!-- 撤销整单：填写撤销原因后确认，单据与明细保留、库存回滚 -->
     <Teleport to="body">
-      <div v-if="voidTargets.length" class="modal-mask" @click.self="closeVoid">
+      <div v-if="voidTarget" class="modal-mask" @click.self="closeVoid">
         <div class="modal void-modal">
           <div class="modal-head">
-            <h3>撤销出入库<template v-if="voidTargets.length > 1">（{{ voidTargets.length }} 条）</template></h3>
+            <h3>撤销出入库单</h3>
             <button class="modal-x" @click="closeVoid">
               <X :size="16" style="display: inline-flex; flex-shrink: 0" />
             </button>
           </div>
           <div class="modal-body">
-            <!-- 单条：展示物料详情；多条：展示条数概览 -->
-            <p v-if="voidTargets.length === 1" class="vd-sum">
-              {{ voidTargets[0].materials?.name || '已删除物料' }}
-              <template v-if="voidTargets[0].materials?.model">· {{ voidTargets[0].materials.model }}</template>
-              · {{ voidTargets[0].type === 'in' ? '入库' : '出库' }} <b>{{ voidTargets[0].qty }}</b>
-              · {{ fmtFull(voidTargets[0].created_at) }}
-            </p>
-            <p v-else class="vd-sum">
-              共 <b>{{ voidTargets.length }}</b> 条
-              <template v-if="voidInCount">（入库 {{ voidInCount }} 条）</template>
-              <template v-if="voidOutCount">（出库 {{ voidOutCount }} 条）</template>
+            <p class="vd-sum">
+              {{ voidTarget.title || voidTarget.order_no || (voidTarget.type === 'in' ? '入库单' : '出库单') }}
+              · {{ voidTarget.item_count }} 项
+              · {{ voidTarget.type === 'in' ? '入库' : '出库' }} <b>{{ voidTarget.total_qty }}</b>
+              · {{ fmtFull(voidTarget.created_at) }}
             </p>
             <p class="vd-tip">
-              撤销后这些记录保留并标记「已撤销」，库存将按各条流水反向回滚
-              <template v-if="voidTargets.length === 1">
-                （{{ voidTargets[0].type === 'in' ? '扣回' : '加回' }} <b>{{ voidTargets[0].qty }}</b>）
-              </template>
-              <template v-else>
-                （入库扣回、出库加回 <b>{{ voidTotalQty }}</b>）
-              </template>
-              。
+              撤销后该单与明细保留并标记「已撤销」，{{ voidTarget.item_count }} 条明细的库存将同步反向回滚
+              （{{ voidTarget.type === 'in' ? '扣回' : '加回' }} <b>{{ voidTarget.total_qty }}</b>）。
+              部分物料库存不足时整单撤销失败，不会产生部分撤销。
             </p>
             <label class="field">
               <span>撤销原因 <em>*</em></span>
@@ -114,7 +89,7 @@
             <button class="btn btn-danger" :disabled="voidBusy || !voidReason.trim()" @click="submitVoid">
               <span v-if="voidBusy" class="spinner-sm" />
               <Undo2 v-else :size="15" style="display: inline-flex; flex-shrink: 0" />
-              确认撤销<template v-if="voidTargets.length > 1">（{{ voidTargets.length }} 条）</template>
+              确认撤销整单
             </button>
           </div>
         </div>
@@ -124,14 +99,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onActivated } from 'vue'
+import { ref, watch, onActivated } from 'vue'
 import { Inbox, Search, Undo2, Ban, X } from 'lucide-vue-next'
-import type { StockLog } from '../../lib/types'
+import type { StockOrder } from '../../lib/types'
 import AppSelect from '../../components/form/AppSelect.vue'
 import Segmented from '../../components/form/Segmented.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import Pager from '../../components/Pager.vue'
-import { listStockLogPage, voidStockLog, voidStockLogs } from '../../lib/db'
+import StockOrderDrawer from '../../components/business/StockOrderDrawer.vue'
+import { pageStockOrders, voidStockOrder } from '../../lib/db'
 import { useToast } from '../../composables/toast'
 import { useStockData } from '../../composables/useStockData'
 
@@ -146,7 +122,7 @@ const logKw = ref('')
 const logPage = ref(1)
 const logPageSize = ref(20)
 const logTotal = ref(0)
-const logRows = ref<StockLog[]>([])
+const orders = ref<StockOrder[]>([])
 const logLoading = ref(false)
 
 const rangeOptions = [
@@ -161,6 +137,12 @@ const statusOptions = [
   { value: 'normal', label: '有效' },
   { value: 'void', label: '已撤销' },
 ]
+
+const SOURCE_LABELS: Record<string, string> = {
+  manual: '手工', init: '初始入库', import: '订单导入', bom: 'BOM 领料',
+  purchase: '待采入库', stocktake: '盘点', legacy: '历史数据',
+}
+function sourceLabel(s: string) { return SOURCE_LABELS[s] ?? s }
 
 /** 时间范围 → 查询用的起止 ISO 时间 */
 function rangeBounds(): { from?: string; to?: string } {
@@ -178,7 +160,7 @@ async function loadLogs() {
   logLoading.value = true
   try {
     const { from, to } = rangeBounds()
-    const res = await listStockLogPage({
+    const res = await pageStockOrders({
       type: logType.value === 'all' ? undefined : logType.value,
       status: logStatus.value === 'all' ? undefined : logStatus.value,
       keyword: logKw.value.trim(),
@@ -186,11 +168,8 @@ async function loadLogs() {
       limit: logPageSize.value,
       offset: (logPage.value - 1) * logPageSize.value,
     })
-    logRows.value = res.rows
+    orders.value = res.rows
     logTotal.value = res.total
-    // 清掉已不在当前结果里的选中项（分页 / 筛选后残留）
-    const ids = new Set(res.rows.map(r => r.id))
-    selected.value = selected.value.filter(id => ids.has(id))
   } catch (e: unknown) {
     // 之前是静默失败，排查困难；这里显式提示（如云端 SQL / 字段未迁移导致的 400）
     toast.error('查询失败：' + ((e as Error)?.message || e))
@@ -214,99 +193,48 @@ defineExpose({ refresh: () => { logPage.value = 1; return loadLogs() } })
 function onLogPage(p: number) { logPage.value = p; void loadLogs() }
 function onLogSize(s: number) { logPageSize.value = s; logPage.value = 1; void loadLogs() }
 
-// ===== 多选 =====
-const selected = ref<string[]>([])
-/** 本页可撤销（未撤销）的流水 id */
-const pageSelectableIds = computed(() => logRows.value.filter(r => r.status !== 'void').map(r => r.id))
-const pageSelectedCount = computed(() => pageSelectableIds.value.filter(id => selected.value.includes(id)).length)
-const allPageChecked = computed(() =>
-  pageSelectableIds.value.length > 0 && pageSelectedCount.value === pageSelectableIds.value.length)
-const pageIndeterminate = computed(() => pageSelectedCount.value > 0 && !allPageChecked.value)
+// ===== 单据明细抽屉 =====
+const curOrder = ref<StockOrder | null>(null)
 
-function isSelected(id: string) { return selected.value.includes(id) }
-
-function toggleRow(id: string) {
-  const i = selected.value.indexOf(id)
-  if (i >= 0) selected.value.splice(i, 1)
-  else selected.value.push(id)
+/** 抽屉内点「撤销整单」：直接以当前单打开撤销确认框 */
+function openVoidFromDrawer() {
+  if (curOrder.value) openVoid(curOrder.value)
 }
 
-function toggleAllPage() {
-  const ids = pageSelectableIds.value
-  if (!ids.length) return
-  if (allPageChecked.value) {
-    // 取消本页：从选中列表里剔除本页 id
-    selected.value = selected.value.filter(id => !ids.includes(id))
-  } else {
-    selected.value = [...new Set([...selected.value, ...ids])]
-  }
-}
-
-function clearSelection() { selected.value = [] }
-
-// ===== 撤销出入库（单条 / 批量共用） =====
-const voidTargets = ref<StockLog[]>([])
+// ===== 撤销整单 =====
+const voidTarget = ref<StockOrder | null>(null)
 const voidReason = ref('')
 const voidErr = ref('')
 const voidBusy = ref(false)
 
-const voidInCount = computed(() => voidTargets.value.filter(r => r.type === 'in').length)
-const voidOutCount = computed(() => voidTargets.value.length - voidInCount.value)
-const voidTotalQty = computed(() => voidTargets.value.reduce((s, r) => s + (Number(r.qty) || 0), 0))
-
-function openVoid(r: StockLog) {
-  voidTargets.value = [r]
-  voidReason.value = ''
-  voidErr.value = ''
-}
-
-/** 批量撤销：按选中项在当前页的顺序组装 */
-function openVoidSelected() {
-  const targets = logRows.value.filter(r => selected.value.includes(r.id) && r.status !== 'void')
-  if (!targets.length) { toast.warning('没有可撤销的记录'); return }
-  voidTargets.value = targets
+function openVoid(o: StockOrder) {
+  if (o.status === 'void') { toast.warning('该单据已撤销'); return }
+  voidTarget.value = o
   voidReason.value = ''
   voidErr.value = ''
 }
 
 function closeVoid() {
   if (voidBusy.value) return
-  voidTargets.value = []
+  voidTarget.value = null
   voidReason.value = ''
   voidErr.value = ''
 }
 
 async function submitVoid() {
-  const targets = [...voidTargets.value]
-  if (!targets.length) return
+  const target = voidTarget.value
+  if (!target) return
   const reason = voidReason.value.trim()
   if (!reason) { voidErr.value = '请填写撤销原因'; return }
   voidBusy.value = true
   voidErr.value = ''
   try {
-    if (targets.length === 1) {
-      const t = targets[0]
-      await voidStockLog({ id: t.id, reason })
-      toast.success(t.type === 'in' ? '入库已撤销，库存已扣回' : '出库已撤销，库存已加回')
-      voidTargets.value = []
-      voidReason.value = ''
-      selected.value = selected.value.filter(id => id !== t.id)
-    } else {
-      const res = await voidStockLogs({ ids: targets.map(t => t.id), reason })
-      if (res.done) toast.success(`已撤销 ${res.done} 条记录，库存已回滚`)
-      if (res.errors.length) {
-        // 失败的保留在选中项里，弹窗保留并提示原因，便于修正后重试
-        voidErr.value = `${res.errors.length} 条撤销失败：${res.errors.slice(0, 3).join('；')}`
-        voidTargets.value = targets.filter(t => res.failedIds.includes(t.id))
-        selected.value = [...res.failedIds]
-        void Promise.all([refreshList(), refreshSummary(), refreshLogs()]).catch(() => { })
-        await loadLogs()
-        return
-      }
-      voidTargets.value = []
-      voidReason.value = ''
-      selected.value = []
-    }
+    await voidStockOrder(target.id, reason)
+    toast.success(target.type === 'in' ? '入库单已撤销，库存已扣回' : '出库单已撤销，库存已加回')
+    voidTarget.value = null
+    voidReason.value = ''
+    // 撤销后当前抽屉里的单据状态已过期：关闭避免展示「有效」旧态
+    curOrder.value = null
     // 库存与汇总已变化：同步刷新共享的物料列表 / 汇总 / 流水，避免其它 tab 与 KPI 看到旧值
     void Promise.all([refreshList(), refreshSummary(), refreshLogs()]).catch(() => { })
     await loadLogs()
@@ -376,7 +304,7 @@ function fmtFull(t: string) {
   box-shadow: 0 0 0 3px var(--c-primary-glow);
 }
 
-/* ===== 出入库记录 ===== */
+/* ===== 出入库单列表 ===== */
 .logs-wrap {
   flex: 1;
   min-height: 0;
@@ -398,68 +326,16 @@ function fmtFull(t: string) {
   padding-right: 4px;
 }
 
-/* ===== 多选操作（筛选行右侧） ===== */
-.sel-group {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.sel-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-xs);
-  color: var(--c-text-2);
-  cursor: pointer;
-}
-
-.sel-count {
-  font-size: var(--fs-xs);
-  color: var(--c-text-2);
-}
-
-.sel-count b {
-  color: var(--c-text);
-}
-
-/* 复选框：与物料选择弹窗（.pick-check）一致 */
-.row-check {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  accent-color: var(--c-primary);
-  cursor: pointer;
-}
-
-.row-check:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.cb {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .log-list li {
   display: grid;
-  grid-template-columns: 20px 32px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
   border-radius: var(--r-md);
   border: 1px solid transparent;
+  cursor: pointer;
   transition: all var(--motion);
-}
-
-/* 选中行 */
-.log-list li.is-sel {
-  background: var(--c-primary-soft);
-  border-color: var(--c-primary);
 }
 
 /* 已撤销：整行弱化 */
@@ -468,7 +344,6 @@ function fmtFull(t: string) {
 }
 
 .log-list li.is-void .info strong,
-.log-list li.is-void .info small,
 .log-list li.is-void .q {
   text-decoration: line-through;
   text-decoration-thickness: 1px;
@@ -506,7 +381,7 @@ function fmtFull(t: string) {
   color: #FF6B6B;
 }
 
-/* 撤销原因（紧跟在型号 / 备注下一行） */
+/* 撤销原因（紧跟在标题下一行） */
 .void-reason {
   display: inline-flex;
   align-items: center;
@@ -577,6 +452,11 @@ function fmtFull(t: string) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.info small .no {
+  font-family: var(--font-mono, monospace);
+  color: var(--c-text-3);
 }
 
 .q {
@@ -671,8 +551,6 @@ function fmtFull(t: string) {
   color: var(--c-danger);
 }
 
-
-
 @media (max-width: 820px) {
   .filters {
     flex-direction: column;
@@ -688,13 +566,7 @@ function fmtFull(t: string) {
   }
 
   .f-cat {
-    flex: 1;
-  }
-
-  /* 竖排后取消右侧推挤，改为靠右排列 */
-  .sel-group {
-    margin-left: 0;
-    justify-content: flex-end;
+    min-width: 0;
   }
 }
 </style>

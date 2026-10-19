@@ -244,7 +244,7 @@ import {
   Plus, ChevronRight, List, FileText, ArrowUpFromLine, Trash2, Check, X, History,
 } from 'lucide-vue-next'
 import {
-  listBomProjects, listBomItems, deleteBomProject, applyStock, updateBomItem,
+  listBomProjects, listBomItems, deleteBomProject, stockInOrder, updateBomItem,
   createMaterial, createBomPickRecord, listBomPickRecords, listCategories,
 } from '../lib/db'
 import type {
@@ -471,18 +471,21 @@ async function issueStock(sets: number) {
     return
   }
   issuing.value = true
-  let ok = 0
   try {
+    const pickNote = `BOM 领料：${proj.name}（${s} 套）`
+    // 一次领料 = 一张出库单（source=bom，source_id 指向 BOM 项目）
+    const { finals } = await stockInOrder({
+      type: 'out', source: 'bom', source_id: proj.id,
+      title: pickNote, note: `BOM 领料：${proj.name}`,
+      items: items
+        .filter(i => i.material_id && i.materials)
+        .map(i => ({ material_id: i.material_id!, qty: i.qty * s, note: pickNote })),
+    })
+    let ok = 0
+    // 本地扣减（以出库后终值为准）
     for (const it of items) {
       if (!it.material_id || !it.materials) continue
-      const need = it.qty * s
-      await applyStock({
-        material_id: it.material_id, type: 'out', qty: need,
-        currentQty: it.materials.qty,
-        note: `BOM 领料：${proj.name}（${s} 套）`,
-      })
-      // 本地扣减
-      it.materials = { ...it.materials, qty: it.materials.qty - need }
+      it.materials = { ...it.materials, qty: finals.get(it.material_id) ?? it.materials.qty - it.qty * s }
       ok++
     }
     // 记一条领料记录（含套数）
