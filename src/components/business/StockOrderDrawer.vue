@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { X, Undo2, Ban, Boxes, Package, User, Clock, Hash } from 'lucide-vue-next'
+import { ref, watch, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { X, Undo2, Ban, Boxes, Package, User, Clock, Hash, Printer } from 'lucide-vue-next'
 import type { StockOrder, StockLog } from '../../lib/types'
 import { listStockLogsByOrder } from '../../lib/db'
 
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const router = useRouter()
 const logs = ref<StockLog[]>([])
 const loading = ref(false)
 
@@ -36,6 +38,21 @@ const SOURCE_LABELS: Record<string, string> = {
   purchase: '待采入库', stocktake: '盘点', legacy: '历史数据',
 }
 function sourceLabel(s: string) { return SOURCE_LABELS[s] ?? s }
+
+/** 本单涉及的物料 id（去重）：跳标签打印时预选 */
+const printIds = computed(() => {
+  const ids: string[] = []
+  for (const l of logs.value) {
+    if (l.material_id && !ids.includes(l.material_id)) ids.push(l.material_id)
+  }
+  return ids
+})
+
+/** 跳标签打印页，带上本单物料 id 预选；路由切走后本抽屉随页面一起卸载 */
+function goPrint() {
+  if (!printIds.value.length) return
+  router.push({ path: '/tools/print', query: { ids: printIds.value.join(',') } })
+}
 
 function fmtTime(t: string | null) {
   if (!t) return ''
@@ -126,10 +143,14 @@ function fmtTime(t: string | null) {
             </section>
           </div>
 
-          <!-- 底部操作：整单撤销（父页面接管确认） -->
+          <!-- 底部操作：标签打印（入库单）+ 整单撤销（父页面接管确认） -->
           <footer v-if="order.status !== 'void'" class="dw-foot">
+            <button v-if="order.type === 'in' && printIds.length" class="btn btn-ghost"
+              title="跳转标签打印，并预选本单物料" @click="goPrint">
+              <Printer :size="14" style="display: inline-flex; flex-shrink: 0" /> 标签打印
+            </button>
             <button class="btn btn-danger" @click="emit('void')">
-              <Undo2 :size="14" style="display: inline-flex; flex-shrink: 0" /> 撤销整单（库存回滚）
+              <Undo2 :size="14" style="display: inline-flex; flex-shrink: 0" /> 撤销整单
             </button>
           </footer>
         </aside>

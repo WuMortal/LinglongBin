@@ -135,6 +135,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   ChevronLeft, ChevronRight, Package, Printer, Search, Tags, X, ZoomIn, ZoomOut,
 } from 'lucide-vue-next'
@@ -160,6 +161,8 @@ const listSearch = ref('')
 const pageIdx = ref(0)
 /** 进入页面时拉取模板/物料/分类，初始即遮罩，避免一片空白 */
 const loading = ref(true)
+
+const route = useRoute()
 
 const tplOptions = computed(() => templates.value.map(t => ({ value: t.id, label: t.name })))
 const curTpl = computed(() => templates.value.find(t => t.id === tplId.value) ?? null)
@@ -427,6 +430,12 @@ async function load() {
       listCategories(),
     ])
     if (!tplId.value && templates.value.length) tplId.value = templates.value[0].id
+    // 从出入库单跳转而来：?ids=id1,id2 预选该单物料（过滤已删除的）
+    const pre = (route.query.ids as string) || ''
+    if (pre && !selectedIds.value.length) {
+      const valid = new Set(allMaterials.value.map(m => m.id))
+      selectedIds.value = pre.split(',').filter(id => valid.has(id))
+    }
   } finally { loading.value = false }
 }
 
