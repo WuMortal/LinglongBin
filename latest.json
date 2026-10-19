@@ -1,43 +1,23 @@
 {
-  "version": "0.1.0",
-  "notes": "初始版本。发布新版本时由 CI 生成并上传到 Release，替换本文件的 url / signature。",
-  "pub_date": "2026-09-09T00:00:00.000Z",
+  "version": "0.2.1",
+  "notes": "1. 修复更新问题",
+  "pub_date": "2026-10-19T07:16:41.996Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWFRCZDkyOUk5ZDJ3UzE2bXlyUUJ3OVcwdllkVkxYaXY4ODR1TW9FcjhYRFJOTnJrTUhhL0dCSmhYZDRudUt4MElKR3p5RWlnalZSRGFjMUhicGNWVmd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTk4CWZpbGU6TGluZ2xvbmdCaW5fMC4yLjBfeDY0X2VuLVVTLm1zaQl2ZXJzaW9uOjAuMi4wCjhxM1JtbHptZ1EzcmdOMDc2RnlydXk4Z0xERmRuMjZ0OUhIS0hHcjNlTzg0V2FDUi8wdlBBNlZCSTk3UTdoQWtrSThhcERjNGxXY0x6STQ0cDdPeEF3PT0K",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64_en-US.msi"
     },
     "windows-x86_64-nsis": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64-setup.exe"
-    },
-    "darwin-aarch64": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_aarch64.dmg"
-    },
-    "darwin-aarch64-app": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWFJUdTdFWkFYRmRuU3BBWTNFRnQ0UmY3cHhVSGZDNXVMN2NwYVljNlM5aC9QTy9mWVNpb09LazFPcDN0aHVKa2l3ekYrdS96Nk5NOTJDUm8raG04MndRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTk4CWZpbGU6TGluZ2xvbmdCaW5fMC4yLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4wCnVWRkljRzZjc2Z1cDNEb2dYbHE2NkJpemtwWWlQOVRUZlNydFljT0czQUhiNnZORXpGMlpWN0daaXowQWs0S0RqWHFOL0cxM2RXaUhjOWI2V1hXUUJBPT0K",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64-setup.exe"
     },
     "darwin-x86_64": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64.dmg"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGRvQmdnZFp2TlMzbmVTeVIzdFhveWllK1RrNy8zQlNhQ2ZSYUgrRTJ6dUJLUmJDYkFzT3YxV0RBQkVRb3p3b0pvVVovdW9oclJsVVQxeUc2MVhTR2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTc1CWZpbGU6TGluZ2xvbmdCaW4uYXBwLnRhci5negl2ZXJzaW9uOjAuMi4wCmNHdXFKdXZIUTlZT1hRY1NVT2pXSHRYNmp1ak9LdGsvWnlSV0ZCNmFncDJISXdaWlJlVEY0NHdsWTRGU1U3K1JEY3BqZ0VDQ2hSd3lNbmYvc003dkRRPT0K",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64.app.tar.gz"
     },
     "darwin-x86_64-app": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_x64.app.tar.gz"
-    },
-    "linux-x86_64": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_amd64.AppImage.tar.gz"
-    },
-    "linux-x86_64-appimage": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_amd64.AppImage.tar.gz"
-    },
-    "linux-x86_64-deb": {
-      "signature": "<REPLACE_WITH_SIGNATURE>",
-      "url": "https://github.com/<your-github>/linglongbin-release/releases/download/v0.1.0/<app-name>_0.1.0_amd64.deb"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGRvQmdnZFp2TlMzbmVTeVIzdFhveWllK1RrNy8zQlNhQ2ZSYUgrRTJ6dUJLUmJDYkFzT3YxV0RBQkVRb3p3b0pvVVovdW9oclJsVVQxeUc2MVhTR2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTc1CWZpbGU6TGluZ2xvbmdCaW4uYXBwLnRhci5negl2ZXJzaW9uOjAuMi4wCmNHdXFKdXZIUTlZT1hRY1NVT2pXSHRYNmp1ak9LdGsvWnlSV0ZCNmFncDJISXdaWlJlVEY0NHdsWTRGU1U3K1JEY3BqZ0VDQ2hSd3lNbmYvc003dkRRPT0K",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64.app.tar.gz"
     }
   }
 }

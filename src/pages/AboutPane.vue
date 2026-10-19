@@ -20,22 +20,7 @@
           <span>开源地址</span>
         </a>
       </div>
-    </div>
-    <!-- 功能介绍 -->
-    <div class="feature-section">
-      <span class="section-title">功能介绍</span>
-      <div class="feature-grid">
-        <div v-for="f in features" :key="f.title" class="feature-card">
-          <component :is="f.icon" class="fc-icon" :size="18" />
-          <div class="fc-body">
-            <b class="fc-title">{{ f.title }}</b>
-            <span class="fc-desc">{{ f.desc }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 更新区域：仅在检查出结果后展示（未触发更新时隐藏标题） -->
+    </div> <!-- 更新区域：仅在检查出结果后展示（未触发更新时隐藏标题） -->
     <div v-if="status !== 'idle' && status !== 'checking'" class="update-section">
       <div class="update-head">
         <span class="update-title">软件更新</span>
@@ -81,6 +66,21 @@
         </div>
       </div>
     </div>
+    <!-- 功能介绍 -->
+    <div class="feature-section">
+      <span class="section-title">功能介绍</span>
+      <div class="feature-grid">
+        <div v-for="f in features" :key="f.title" class="feature-card">
+          <component :is="f.icon" class="fc-icon" :size="18" />
+          <div class="fc-body">
+            <b class="fc-title">{{ f.title }}</b>
+            <span class="fc-desc">{{ f.desc }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
   </div>
 </template>
 

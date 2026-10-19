@@ -1,6 +1,6 @@
 [package]
 name = "linglong-bin"
-version = "0.2.0"
+version = "0.2.1"
 description = "LinglongBin 元器件库存管理"
 authors = ["you"]
 edition = "2021"

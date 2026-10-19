@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { getVersion } from '@tauri-apps/api/app'
@@ -22,7 +22,10 @@ export interface UpdateProgress {
 const status = ref<UpdateStatus>('idle')
 const errorMsg = ref('')
 const currentVersion = ref('')
-const updateInfo = ref<Update | null>(null)
+// 注意：Update 是带私有字段（#rid）的类实例，必须用 shallowRef ——
+// ref 的深度响应式会把它包进 Proxy，downloadAndInstall 内部访问 #rid 时
+// 会因 Proxy 未注册私有字段 WeakMap 而抛「Cannot read private member」
+const updateInfo = shallowRef<Update | null>(null)
 const progress = ref<UpdateProgress>({ downloaded: 0, contentLength: 0, percent: 0 })
 
 /** 加载当前版本号 */

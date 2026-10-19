@@ -1,7 +1,7 @@
 {
   "name": "linglong-bin",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,8 @@
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev"
+    "tauri:dev": "tauri dev",
+    "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
