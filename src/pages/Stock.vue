@@ -18,10 +18,13 @@
       <div class="main card">
         <div class="toolbar">
           <Segmented :model-value="activeTab" :options="tabs" @update:model-value="go" />
-          <button class="btn-refresh" :disabled="refreshing" :title="refreshing ? '刷新中…' : '刷新'"
+          <button class="btn btn-primary btn-batImport" title="多物料一次出入库（生成一张单）" @click="batchOpen = true">
+            <ArrowLeftRight :size="14" style="display: inline-flex; flex-shrink: 0" /> 批量出入库
+          </button>
+          <!-- <button class="btn-refresh" :disabled="refreshing" :title="refreshing ? '刷新中…' : '刷新'"
             @click="refresh">
             <RefreshCw :size="15" :class="{ 'icon-spin': refreshing }" />
-          </button>
+          </button> -->
         </div>
         <!-- 4 个 tab 共用一份已加载数据；KeepAlive 保留切换前的页内状态（筛选、展开、导入向导等）。
              过渡只作用在 tab 内容区，整页（标题/KPI/工具栏）保持不动 -->
@@ -33,6 +36,9 @@
           </transition>
         </router-view>
       </div>
+
+      <!-- 批量出入库：分类树选物料 → 逐个填数量 → 一次提交一张单 -->
+      <BatchStockModal :open="batchOpen" @close="batchOpen = false" @done="onBatchDone" />
     </template>
   </section>
 </template>
@@ -40,9 +46,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Boxes, History, ShoppingCart, Upload, ClipboardCheck, RefreshCw } from 'lucide-vue-next'
+import { Boxes, History, ShoppingCart, Upload, ClipboardCheck, RefreshCw, ArrowLeftRight } from 'lucide-vue-next'
 import KpiCards from '../components/KpiCards.vue'
 import Segmented from '../components/form/Segmented.vue'
+import BatchStockModal from '../components/business/BatchStockModal.vue'
 import { useStockData } from '../composables/useStockData'
 
 const router = useRouter()
@@ -61,6 +68,13 @@ async function refresh() {
       refreshList().catch(() => {}),
     ])
   } finally { refreshing.value = false }
+}
+
+/** 批量出入库弹窗开关；提交成功后关闭并刷新当前 tab 与共享物料列表 */
+const batchOpen = ref(false)
+async function onBatchDone() {
+  batchOpen.value = false
+  await refresh()
 }
 
 const tabs = [
@@ -147,29 +161,23 @@ onMounted(load)
 }
 
 /* 右侧刷新按钮 */
-.btn-refresh {
+.btn-batImport {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--ctrl-h);
-  height: var(--ctrl-h);
+  /* width: var(--ctrl-h);
+  height: var(--ctrl-h); */
   flex-shrink: 0;
-  color: var(--c-text-2);
-  background: var(--c-glass);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
+  /* color: var(--c-text-2);
+  background: var(--c-glass); */
+  /* border: 1px solid var(--c-border);
+  border-radius: var(--r-md); */
   cursor: pointer;
   transition: all var(--motion);
 }
 
-.btn-refresh:hover:not(:disabled) {
-  color: var(--c-primary);
-  border-color: var(--c-primary);
-  background: var(--c-surface);
-}
-
-.btn-refresh:disabled {
+.btn-batImport:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

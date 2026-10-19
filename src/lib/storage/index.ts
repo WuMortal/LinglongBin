@@ -11,6 +11,7 @@ export type {
   ListMaterialsOpts,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, PurchaseOrderPageOpts,
+  StockOrderInput, StockOrderPageOpts, StockOrderItem,
 } from './types'
 // BomPickRecord 定义在 src/lib/types.ts（storage/types.ts 仅 import 未 re-export），需从上级模块导出
 export type { BomPickRecord } from '../types'

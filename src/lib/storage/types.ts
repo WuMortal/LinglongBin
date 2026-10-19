@@ -189,6 +189,8 @@ export interface DataStore {
   stockInOrder(input: StockOrderInput): Promise<{ order: StockOrder; finals: Map<string, number> }>
   /** 出入库单分页（服务端筛选 + 总数，关键词含明细物料名/型号/编号） */
   pageStockOrders(opts?: StockOrderPageOpts): Promise<PageResult<StockOrder>>
+  /** 按 id 取单据（含供应商名） */
+  getStockOrder(id: string): Promise<StockOrder>
   /** 某张单的全部明细流水（按时间正序） */
   listStockLogsByOrder(orderId: string): Promise<StockLog[]>
   /** 撤销整单：先全量校验（回滚后不得出现负库存）后执行，任一明细失败则整单报错、不做部分撤销 */
