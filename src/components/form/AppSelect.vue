@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { ChevronDown, Check } from 'lucide-vue-next'
+import { ChevronDown, Check, Plus } from 'lucide-vue-next'
 
 /** group 可选：同组选项会在浮层里合并显示一个小标题（如「主表字段 / 分类参数」） */
 interface Opt { value: unknown; label: string; disabled?: boolean; group?: string }
@@ -19,10 +19,13 @@ const props = withDefaults(
     size?: 'sm' | 'md'
     /** 多选：modelValue 为数组，选项可叠加勾选 */
     multiple?: boolean
+    /** 可新增：需配合 searchable。搜索词与现有选项无精确匹配（忽略大小写）时展示「新增」项，
+        选中后 emit create（父级负责持久化，如写入字典）+ update:modelValue */
+    creatable?: boolean
   }>(),
-  { placeholder: '请选择', searchPlaceholder: '搜索…', minWidth: undefined, maxWidth: undefined, width: undefined, disabled: false, size: 'md', multiple: false }
+  { placeholder: '请选择', searchPlaceholder: '搜索…', minWidth: undefined, maxWidth: undefined, width: undefined, disabled: false, size: 'md', multiple: false, creatable: false }
 )
-const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: unknown]; create: [value: string] }>()
 
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
@@ -39,7 +42,10 @@ const selectedLabel = computed(() => {
     return `已选 ${arr.length} 项`
   }
   const f = props.options.find(o => o.value === props.modelValue)
-  return f ? f.label : props.placeholder
+  if (f) return f.label
+  // 可新增：值不在选项中时直接回显原始字符串（如刚新造的库位）
+  if (props.creatable && typeof props.modelValue === 'string' && props.modelValue) return props.modelValue
+  return props.placeholder
 })
 
 const filtered = computed(() => {
@@ -47,6 +53,21 @@ const filtered = computed(() => {
   const k = search.value.trim().toLowerCase()
   return props.options.filter(o => o.label.toLowerCase().includes(k))
 })
+
+/** 可新增：搜索词非空且与现有选项无精确匹配（忽略大小写）时出现「新增」项 */
+const canCreate = computed(() =>
+  !!props.creatable && !!props.searchable && !!search.value.trim() &&
+  !props.options.some(o => o.label.toLowerCase() === search.value.trim().toLowerCase()))
+
+/** 选中「新增」项：emit create 交给父级持久化（如写入字典），此处只负责回填值 */
+function chooseCreate() {
+  const val = search.value.trim()
+  if (!val) return
+  emit('create', val)
+  emit('update:modelValue', val)
+  search.value = ''
+  if (!props.multiple) open.value = false
+}
 
 function updatePos() {
   if (!triggerEl.value) return
@@ -151,7 +172,10 @@ onBeforeUnmount(() => {
                   style="display: inline-flex; flex-shrink: 0" />
               </li>
             </template>
-            <li v-if="searchable && !filtered.length" class="empty">无匹配</li>
+            <li v-if="canCreate" class="opt create" @click="chooseCreate">
+              <span class="create-t"><Plus :size="13" style="display: inline-flex; flex-shrink: 0" />新增「{{ search.trim() }}」</span>
+            </li>
+            <li v-if="searchable && !filtered.length && !canCreate" class="empty">无匹配</li>
           </ul>
         </div>
       </transition>
@@ -311,6 +335,22 @@ onBeforeUnmount(() => {
   text-align: center;
   color: var(--c-text-3);
   font-size: var(--fs-sm);
+}
+
+/* 「新增」项：主题蓝 + 图标，悬停底色同选中态 */
+.pop-float .opt.create {
+  color: var(--c-primary);
+  font-weight: 600;
+}
+
+.pop-float .opt.create .create-t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pop-float .opt.create:hover {
+  background: var(--c-primary-soft);
 }
 
 /* 小号浮层：更紧凑的选项行 */

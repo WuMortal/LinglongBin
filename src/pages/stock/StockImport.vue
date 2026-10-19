@@ -259,9 +259,9 @@
     <!-- 物料来源（新建物料 + 自身库 + 嘉立创查 合并为一个入口） -->
     <MaterialPickerDialog
       :model-value="!!pickerImpFor"
-      :keyword="pickerImpFor?.model || ''"
-      :desc="pickerImpFor ? `为「${pickerImpFor.model}」新建或挑选物料` : ''"
-      :default-kind="pickerImpFor && isLcscCode(pickerImpFor.model || '') ? 'lcsc' : 'material'"
+      :keyword="pickerImpFor ? impSearchKey(pickerImpFor) : ''"
+      :desc="pickerImpFor ? `为「${pickerImpFor.model || pickerImpFor.partNo}」新建或挑选物料` : ''"
+      :default-kind="pickerImpFor && (isLcscCode(pickerImpFor.model || '') || isLcscCode(pickerImpFor.partNo || '')) ? 'lcsc' : 'material'"
       allow-new
       :categories="impCategories"
       :prefill="impPickerPrefill"
@@ -313,8 +313,9 @@ import {
 } from 'lucide-vue-next'
 import {
   listSuppliers, listCategories, matchMaterialsByKeys, createMaterial, updateMaterial,
-  createMaterialFiles, applyStock,
+  createMaterialFiles, applyStockBatch,
 } from '../../lib/db'
+import type { ApplyStockBatchItem } from '../../lib/storage'
 import {
   parseSheet, detectColumnsPrecise, pickPreset, sliceAt, IMPORT_PRESETS,
   type ImportPreset,
@@ -729,10 +730,20 @@ function normKey(v?: string | null): string {
 }
 
 /**
+ * 行的匹配/搜索主键：立创方案用商品编号（订单里的编号即立创编码，查立创 / 挑选弹窗直达），
+ * 其余方案仍用型号；立创方案缺编号时回退型号，避免完全搜不了。
+ */
+function impSearchKey(r: ImpRow): string {
+  return activePreset.value.id === 'lcsc' ? (r.partNo || r.model || '') : (r.model || '')
+}
+
+/**
  * 一键匹配：
  * 1) 先把所有行的「型号 / 商品编号」收集去重，一次批量查回候选物料（请求数从「每行一次」降到几批）；
  * 2) 再在本地按「精确 → 子串」挑每行的命中，结果与原来的逐行模糊查询等价；
  * 3) 手动指定过的行不覆盖。
+ * 立创方案特例：商品编号是唯一可靠主键（型号列常为描述，按型号/名称匹配易误命中），
+ * 故仅按「行商品编号 ↔ 物料 part_no」匹配。
  */
 async function matchAllImp() {
   impBusy.value = true
@@ -742,19 +753,20 @@ async function matchAllImp() {
       try { suppliers.value = await listSuppliers(); impSuppliersLoaded = true; suppliersLoaded.value = true } catch { /* 静默 */ }
     }
 
+    const byPartNo = activePreset.value.id === 'lcsc'
     // ---- 1) 收集关键词 → 批量查询候选 ----
     const keys: string[] = []
     for (const r of impRows.value) {
       if (r.manual) continue
-      if (r.model) keys.push(r.model)
+      if (!byPartNo && r.model) keys.push(r.model)
       if (r.partNo) keys.push(r.partNo)
     }
     const pool = await matchMaterialsByKeys(keys)
 
-    // 精确索引：物料的 型号 / 商品编号 / 名称 → 物料
+    // 精确索引：物料的 型号 / 商品编号 / 名称 → 物料（立创方案仅用 商品编号）
     const exact = new Map<string, MaterialRow>()
     for (const m of pool) {
-      for (const k of [m.model, m.part_no, m.name]) {
+      for (const k of byPartNo ? [m.part_no] : [m.model, m.part_no, m.name]) {
         const nk = normKey(k)
         if (nk && !exact.has(nk)) exact.set(nk, m)
       }
@@ -764,15 +776,17 @@ async function matchAllImp() {
     for (const r of impRows.value) {
       if (r.manual) continue
       let hit: MaterialRow | null = null
-      for (const k of [r.model, r.partNo]) {
+      for (const k of byPartNo ? [r.partNo] : [r.model, r.partNo]) {
         const nk = normKey(k)
         if (!nk) continue
         hit = exact.get(nk) ?? null
         if (hit) break
-        // 子串兜底：等价于旧逻辑的 ilike %key%
-        hit = pool.find(m =>
-          normKey(m.model).includes(nk) || normKey(m.part_no).includes(nk) || normKey(m.name).includes(nk),
-        ) ?? null
+        // 子串兜底：等价于旧逻辑的 ilike %key%（立创方案仅在物料 商品编号 内找）
+        hit = byPartNo
+          ? pool.find(m => normKey(m.part_no).includes(nk)) ?? null
+          : pool.find(m =>
+              normKey(m.model).includes(nk) || normKey(m.part_no).includes(nk) || normKey(m.name).includes(nk),
+            ) ?? null
         if (hit) break
       }
       if (hit) {
@@ -972,9 +986,9 @@ async function newImpMaterial(r: ImpRow) {
 // ===== 一键匹配立创 =====
 const impLcscMatching = ref(false)
 const impLcscProg = ref({ done: 0, total: 0, kw: '' })
-/** 可参与一键匹配的行：未绑定（无物料、无待创建草稿、非手动指定）且有型号 */
+/** 可参与一键匹配的行：未绑定（无物料、无待创建草稿、非手动指定）且有搜索主键（立创方案为商品编号，其余为型号） */
 const impMatchable = computed(() =>
-  impRows.value.filter(r => !r.material_id && !r.pending && !r.manual && r.model),
+  impRows.value.filter(r => !r.material_id && !r.pending && !r.manual && impSearchKey(r)),
 )
 
 /** 为所有未绑定行自动查立创，命中即生成「待创建」草稿（不落库，入库时统一建料） */
@@ -986,7 +1000,8 @@ async function autoMatchImpLcsc() {
   impLcscMatching.value = true
   try {
     const res = await matchLcscBatch(
-      targets.map(r => ({ keyword: r.model, partNo: r.partNo })),
+      // 立创方案：keyword 用商品编号（即立创编码，搜索直达且 pickBestHit 可精确比对编码）
+      targets.map(r => ({ keyword: impSearchKey(r), partNo: r.partNo })),
       impCategories.value,
       p => { impLcscProg.value = { done: p.done, total: p.total, kw: p.keyword } },
     )
@@ -1102,6 +1117,8 @@ async function doImport() {
   impDone.value = 0
   let ok = 0, created = 0
   try {
+    // 阶段一：建料 / 补全资料（逐行处理），收集待入账明细
+    const stockItems: ApplyStockBatchItem[] = []
     for (const r of impRows.value) {
       impDone.value++
       let mid = r.material_id
@@ -1146,18 +1163,26 @@ async function doImport() {
       // 入库数量：新建物料（待创建表单已确认）以表单「初始库存」为准（默认 = 本行导入数量），
       // 已在库的匹配物料为累加入库，仍用本行数量
       const stockQty = pend && pend.qty > 0 ? pend.qty : r.qty
-      const cur = comps.value.find(c => c.id === mid)?.qty ?? 0
-      const fresh = await applyStock({
-        material_id: mid, type: 'in', qty: stockQty, currentQty: cur,
+      stockItems.push({
+        material_id: mid, type: 'in', qty: stockQty,
         supplier_id: r.supplier_id, note: noteOf(r),
       })
-      // 同步本地
-      const idx = comps.value.findIndex(c => c.id === mid)
-      if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty: fresh.qty }
-      const s = sumOf(mid)
-      s.total_in += stockQty; s.last30_in += stockQty
-      summaryMap.value.set(mid, s)
       ok++
+    }
+    // 阶段二：批量入账 —— 一次写完全部入库流水，再按物料聚合更新库存，
+    // 避免逐行 2 次往返（流水条数不变，网络请求从 2N 降到 1 + 去重物料数）
+    if (stockItems.length) {
+      const finals = await applyStockBatch(stockItems)
+      // 同步本地库存
+      for (const [id, qty] of finals) {
+        const idx = comps.value.findIndex(c => c.id === id)
+        if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty }
+      }
+      for (const it of stockItems) {
+        const sm = sumOf(it.material_id)
+        sm.total_in += it.qty; sm.last30_in += it.qty
+        summaryMap.value.set(it.material_id, sm)
+      }
     }
     expandCache.clear()
     refreshLogs()

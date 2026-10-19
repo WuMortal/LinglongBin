@@ -10,7 +10,7 @@ import type {
   StockTake, StockTakeItem, StagnantRow,
 } from './types'
 import type {
-  ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
   VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
@@ -154,14 +154,14 @@ export async function importLcscCategories(
   }
   onProgress?.({ phase: 'done', majorName: '', minorName: '', majorIdx: LCSC_CATEGORIES.length, majorTotal: LCSC_CATEGORIES.length, minorDone: minorTotal, minorTotal })
 
-  // 2) 导入完成后确保存在一份默认模板（SQL 种子覆盖已建库用户，这里兜底新用户 / 被删场景）
+  // 2) 导入完成后确保存在一份默认模板（模板种子只在 App 层，SQL 初始化脚本不含）
   const templateCreated = await ensureDefaultLabelTemplate()
 
   return { majors, minors, skipped, templateCreated }
 }
 
-// 默认模板种子：内容与 script/0001_init.sql（第 11 段 Supabase）内置模板一致，两处需同步。
-// category_id 用占位符 {{分类名称_Id}}：SQL 无法预知导入后的 uuid，故 App 层在导入分类后
+// 默认模板种子：只在 App 层维护（SQL 初始化脚本已不含种子）。
+// category_id 用占位符 {{分类名称_Id}}：无法预知导入后的 uuid，故 App 层在导入分类后
 // 按分类名解析为实际分类 id（见 ensureDefaultLabelTemplate）。category_id 为空 = 兜底格式。
 const BUILTIN_TPL_LAYOUT: LabelSheetLayout = {
   paper: 'A4', paper_w: 210, paper_h: 297, sheet_w: 210, sheet_h: 297,
@@ -169,10 +169,20 @@ const BUILTIN_TPL_LAYOUT: LabelSheetLayout = {
   off_x: 0, off_y: 0, scale_fix: 1, guides: true, auto_fill: false,
 }
 
-// 占位符 → 实际立创分类名（导入后按名查 id 替换）
+// 占位符 → 实际立创分类名（导入后按名查 id 替换）。
+// 注意：key 是历史约定的占位符字面量（老库里可能已存了这些字符串，勿随意改名），
+//       value 必须与 importLcscCategories 导入的分类名完全一致。
 const BUILTIN_TPL_CAT_NAMES: Record<string, string> = {
   '{{贴片电阻_Id}}': '贴片电阻',
   '{{贴片电容(MLCC)_Id}}': '贴片电容(MLCC)',
+  '{{三极管(BJT)_Id}}': '三极管(BJT)',
+  '{{发光二极管_Id}}': '发光二极管 / LED',
+  '{{场效应管(MOSFET)_Id}}': '场效应管(MOSFET)',
+  '{{稳压二极管_Id}}': '稳压二极管',
+  '{{肖特基二极管_Id}}': '肖特基二极管',
+  '{{通用二极管_Id}}': '通用二极管',
+  '{{开关二极管_Id}}': '开关二极管',
+  '{{电流采样电阻_Id}}': '电流采样电阻 / 分流器',
 }
 
 const BUILTIN_TPL_CATS_SEED: LabelCatConfig[] = [
@@ -183,7 +193,7 @@ const BUILTIN_TPL_CATS_SEED: LabelCatConfig[] = [
       { id: 'bmu83ihi61', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
       { id: 'bmu83iiry3', type: 'field', field: 'param:param_10835_n', x: 2, y: 1, w: 1, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
       { id: 'bmu83ij2v4', type: 'field', field: 'param:param_10836_s', x: 3, y: 1, w: 1, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
-      { id: 'bmu83vz1y5', type: 'field', field: 'param:queryProductStandard', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu83vz1y5', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
       { id: 'bmu83we9n6', type: 'field', field: 'param:param_10837_n', x: 2, y: 2, w: 1, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, text: ' ' },
       { id: 'bmu8de09v1', type: 'field', field: 'param:param_11155_n', x: 3, y: 2, w: 1, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
     ],
@@ -196,11 +206,99 @@ const BUILTIN_TPL_CATS_SEED: LabelCatConfig[] = [
       { id: 'bmu83pkfb1', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, empty_behavior: 'keep', font_pt: 6 },
       { id: 'bmu83plbn3', type: 'field', field: 'param:param_10951_n', x: 2, y: 1, w: 1, h: 1, align: 'right', valign: 'middle', auto_shrink: true, empty_behavior: 'keep', font_pt: 6 },
       { id: 'bmu83pljz4', type: 'field', field: 'param:param_10952_s', x: 3, y: 1, w: 1, h: 1, align: 'left', valign: 'middle', auto_shrink: true, empty_behavior: 'keep', font_pt: 6 },
-      { id: 'bmu846b011', type: 'field', field: 'param:queryProductStandard', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu846b011', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
       { id: 'bmu846l282', type: 'field', field: 'param:param_10953_n', x: 2, y: 2, w: 1, h: 1, align: 'left', valign: 'middle', auto_shrink: true, text: ' ', font_pt: 6 },
       { id: 'bmu8ddgoh3', type: 'field', field: 'param:param_10954', x: 3, y: 2, w: 1, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
     ],
     sort_mode: 'field', sort_field: 'param_10951_n', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{三极管(BJT)_Id}}',
+    blocks: [
+      { id: 'bmu8vqoqh1', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vqpzj2', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vqve34', type: 'field', field: 'param:param_10838_s', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vqvsm5', type: 'field', field: 'param:param_10839_n', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vqy257', type: 'field', field: 'package', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+    ],
+    sort_mode: 'field', sort_field: 'param_10839_n', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{发光二极管_Id}}',
+    blocks: [
+      { id: 'bmu9hx7oh1', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu9hxpjz2', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu9hxkdp3', type: 'field', field: 'param:param_10869_n', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu9hxyp35', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu9hxr254', type: 'field', field: 'param:param_10870', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+    ],
+    sort_mode: 'field', sort_field: 'param_10870', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{场效应管(MOSFET)_Id}}',
+    blocks: [
+      { id: 'bmu8xyoeo1', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8xyth62', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8xzh8i3', type: 'field', field: 'param:param_10783_s', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8y0x4e4', type: 'field', field: 'param:param_10784_n', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8xzwxs5', type: 'field', field: 'package', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+    ],
+    sort_mode: 'field', sort_field: 'param_10784_n', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{稳压二极管_Id}}',
+    blocks: [
+      { id: 'bmu8vh2ch1', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vh79z2', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vh6pq3', type: 'field', field: 'param:param_10815_s', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vhabh4', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu8vh91l5', type: 'field', field: 'param:param_10816', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+    ],
+    sort_mode: 'field', sort_field: 'param_10816', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{肖特基二极管_Id}}',
+    blocks: [
+      { id: 'bmu8vi3y81', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vi9i52', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vi89k3', type: 'field', field: 'param:param_10802_s', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vibln4', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu8viaqk5', type: 'field', field: 'param:param_10803', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+    ],
+    sort_mode: 'field', sort_field: 'param_10803', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{通用二极管_Id}}',
+    blocks: [
+      { id: 'bmu8vihqx1', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vinl72', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vibku3', type: 'field', field: 'param:param_10786_s', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vipqu4', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu8vimlp5', type: 'field', field: 'param:param_10787', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+    ],
+    sort_mode: 'field', sort_field: 'param_10787', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{开关二极管_Id}}',
+    blocks: [
+      { id: 'bmu8viyqx1', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vj5592', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vj0of3', type: 'field', field: 'param:param_10792_s', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8vj2lv4', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu8vj1gw5', type: 'field', field: 'param:param_10793', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+    ],
+    sort_mode: 'field', sort_field: 'param_10793', sort_dir: 'asc',
+  },
+  {
+    category_id: '{{电流采样电阻_Id}}',
+    blocks: [
+      { id: 'bmu8wyko81', type: 'field', field: 'model', x: 0, y: 0, w: 4, h: 1, align: 'center', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8wz9r82', type: 'field', field: 'brand', x: 0, y: 1, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8x041q3', type: 'field', field: 'param:param_10835_n', x: 2, y: 1, w: 2, h: 1, align: 'right', valign: 'middle', auto_shrink: true, font_pt: 6 },
+      { id: 'bmu8x06344', type: 'field', field: 'package', x: 0, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6, prefix: '封装:' },
+      { id: 'bmu8x0z555', type: 'field', field: 'param:param_10964', x: 2, y: 2, w: 2, h: 1, align: 'left', valign: 'middle', auto_shrink: true, font_pt: 6 },
+    ],
+    sort_mode: 'field', sort_field: 'param_10835_n', sort_dir: 'asc',
   },
   {
     category_id: '',
@@ -231,7 +329,7 @@ function resolveBuiltinCats(cats: LabelCatConfig[], nameToId: Map<string, string
 
 /**
  * 合并 / 升级已有默认模板：保留用户已有的分类配置，解析残留占位符，
- * 并补齐缺失的电阻 / 电容内置配置（针对仅含兜底格式的老种子）。
+ * 并补齐缺失的内置分类配置（针对仅含兜底格式的老种子）。
  */
 function mergeBuiltinCats(
   existing: LabelCatConfig[],
@@ -278,9 +376,9 @@ function builtinCatsEqual(a: LabelCatConfig[], b: LabelCatConfig[]): boolean {
 }
 
 /**
- * 确保当前用户存在一份「含贴片电阻 / 贴片电容(MLCC) 布局」的默认标签模板。
+ * 确保当前用户存在一份含常用立创分类布局的默认标签模板。
  * - 没有任何模板：创建一份完整内置默认模板（占位符按已导入分类名解析为实际 id）。
- * - 已有默认模板：保留用户配置，仅解析残留占位符、补齐缺失的电阻 / 电容布局（幂等）。
+ * - 已有默认模板：保留用户配置，仅解析残留占位符、补齐缺失的内置分类布局（幂等）。
  * 返回 true 表示模板被创建或更新过。
  */
 export async function ensureDefaultLabelTemplate(): Promise<boolean> {
@@ -475,6 +573,7 @@ export const addStockLog = (input: StockInput): Promise<StockLog> => s.addStockL
 export const listStockLog = (opts?: { limit?: number; materialId?: string; type?: 'in' | 'out' }): Promise<StockLog[]> => s.listStockLog(opts)
 export const listStockLogPage = (opts?: StockLogPageOpts): Promise<PageResult<StockLog>> => s.listStockLogPage(opts)
 export const applyStock = (input: ApplyStockInput): Promise<MaterialRow> => s.applyStock(input)
+export const applyStockBatch = (items: ApplyStockBatchItem[]): Promise<Map<string, number>> => s.applyStockBatch(items)
 export const voidStockLog = (input: VoidStockLogInput): Promise<StockLog> => s.voidStockLog(input)
 export const voidStockLogs = (input: VoidStockLogsInput): Promise<VoidStockLogsResult> => s.voidStockLogs(input)
 export const stockSummary = (): Promise<StockSummaryRow[]> => s.stockSummary()

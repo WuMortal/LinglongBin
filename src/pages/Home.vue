@@ -12,9 +12,20 @@
         <button class="btn btn-ghost add" @click="searchLcsc">
           <Search :size="16" style="display: inline-flex; flex-shrink: 0" />导入立创
         </button>
-        <button class="btn btn-ghost add" :class="{ on: selectMode }" @click="toggleSelectMode">
-          <Trash2 :size="16" style="display: inline-flex; flex-shrink: 0" />{{ selectMode ? '退出批量' : '批量删除' }}
-        </button>
+        <!-- 更多菜单：批量删除 / 一键库位（均进入多选模式，选中后由批量操作条执行） -->
+        <div ref="moreAnchorEl" class="more-anchor">
+          <button class="btn btn-ghost add" :class="{ on: selectMode }" @click="selectMode ? exitSelectMode() : (moreOpen = !moreOpen)">
+            <MoreHorizontal :size="16" style="display: inline-flex; flex-shrink: 0" />{{ selectMode ? '退出批量' : '' }}
+          </button>
+          <div v-if="moreOpen" class="more-menu">
+            <button class="more-item danger" @click="enterSelect('delete')">
+              <Trash2 :size="14" style="display: inline-flex; flex-shrink: 0" />批量删除
+            </button>
+            <button class="more-item" @click="enterSelect('location')">
+              <MapPin :size="14" style="display: inline-flex; flex-shrink: 0" />一键库位
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -48,7 +59,7 @@
         <div class="toolbar">
           <div class="search">
             <Search :size="16" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
-            <input v-model="search" type="search" placeholder="搜索名称、型号、品牌、封装..." />
+            <input v-model="search" type="search" placeholder="搜索名称、型号、编号… 空格/逗号分隔可同时查多个" />
           </div>
           <!-- 参数筛选：未选到小类时禁用；悬浮展开，点击可固定 -->
           <div ref="paramAnchorEl" class="pf-anchor" @mouseenter="openParam" @mouseleave="closeParam">
@@ -94,10 +105,13 @@
           </button>
           <button class="sel-link" :disabled="!selectedCount" @click="clearSelection">清空选择</button>
           <span class="sel-spacer" />
-          <button class="btn btn-danger" :disabled="!selectedCount" @click="removeSelected">
+          <button v-if="selectAction === 'location'" class="btn btn-primary" :disabled="!selectedCount" @click="openBatchLoc">
+            <MapPin :size="14" style="display: inline-flex; flex-shrink: 0" />设置库位
+          </button>
+          <button v-else class="btn btn-danger" :disabled="!selectedCount" @click="removeSelected">
             <Trash2 :size="14" style="display: inline-flex; flex-shrink: 0" />删除所选
           </button>
-          <button class="btn btn-ghost" @click="toggleSelectMode">退出</button>
+          <button class="btn btn-ghost" @click="exitSelectMode">退出</button>
         </div>
 
         <p v-if="error" class="error">{{ error }}</p>
@@ -153,7 +167,13 @@
           </div>
           <div class="row">
             <span class="qty" :class="{ low: isLow(it) }">×{{ it.qty }}</span>
-            <span class="price">¥{{ formatPrice(it.price) }}</span>
+            <span class="row-r">
+              <!-- 库位：图标同物料抽屉，有库位才显示，紧贴价格左侧 -->
+              <span v-if="it.location" class="loc" :title="`库位 ${it.location}`">
+                <MapPin :size="12" style="display: inline-flex; flex-shrink: 0" />{{ it.location }}
+              </span>
+              <span class="price">¥{{ formatPrice(it.price) }}</span>
+            </span>
           </div>
         </div>
       </article>
@@ -169,51 +189,14 @@
     <!-- 物料详情抽屉 -->
     <MaterialDetailDrawer :material="detailing" @close="detailing = null" />
 
-    <!-- 出入库弹窗 -->
-    <Teleport to="body">
-      <div v-if="quick" class="modal-mask" @click.self="quick = null">
-        <div class="modal" style="max-width: 440px">
-          <div class="modal-head">
-            <h3>出入库 · {{ quick.mat.name }}</h3>
-            <p class="qk-sub">当前库存 ×{{ quick.mat.qty }}<template v-if="quick.mat.model || quick.mat.brand"> · {{ [quick.mat.model, quick.mat.brand].filter(Boolean).join(' ') }}</template></p>
-          </div>
-          <div class="modal-body">
-            <Segmented v-model="quick.type" full class="qk-seg"
-              :options="[
-                { value: 'in', label: '入库', icon: Inbox },
-                { value: 'out', label: '出库', icon: ArrowUpFromDot },
-              ]" />
-            <div class="qk-grid">
-              <label class="field">
-                <label>数量</label>
-                <input v-model.number="quick.qty" type="number" min="1" @keyup.enter="submitQuick" />
-              </label>
-              <label class="field" v-if="quick.type === 'in'">
-                <label>供应商</label>
-                <AppSelect v-model="quick.supplier_id" :options="supplierOptions" :min-width="0" />
-              </label>
-              <label class="field" v-else>
-                <label>用途</label>
-                <AppSelect v-model="quick.purpose" :options="purposeOptions" :min-width="0" />
-              </label>
-              <label class="field qk-note-field">
-                <label>备注</label>
-                <input v-model="quick.note" :placeholder="quick.type === 'in' ? '如 采购到货' : '如 焊接消耗'" @keyup.enter="submitQuick" />
-              </label>
-            </div>
-          </div>
-          <div class="modal-foot">
-            <button class="btn btn-ghost" @click="quick = null">取消</button>
-            <button class="btn" :class="quick.type === 'in' ? 'btn-primary' : 'btn-danger'" :disabled="quickBusy" @click="submitQuick">
-              <span v-if="quickBusy" class="spinner-sm" />{{ quickBusy ? '处理中…' : (quick.type === 'in' ? '确认入库' : '确认出库') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <!-- 出入库弹窗（business/QuickStockModal：内部管理供应商 / 用途字典与表单） -->
+    <QuickStockModal :material="quickMat" @done="onQuickDone" @close="quickMat = null" />
 
     <MaterialFormDialog v-model="showAdd" :categories="categories" :material="editing"
       :lcsc="formLcsc" :lcsc-price="formLcscPrice" @saved="onSaved" />
+
+    <!-- 批量设置库位弹窗（business/BatchLocationModal：字典下拉 + 搜索新增） -->
+    <BatchLocationModal :ids="batchLocIds" @applied="onBatchLocApplied" @close="batchLocIds = []" />
 
     <!-- 搜立创弹窗：选中后回填到「添加物料」表单，由用户确认保存（与导入 / BOM 绑定互不影响） -->
     <Teleport to="body">
@@ -239,23 +222,23 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, reactive } from 'vue'
 import {
-  Plus, Inbox, Search, Box, Image as ImageIcon, Trash2, Pencil, ArrowLeftRight, ArrowUpFromDot, Tag, X,
-  RotateCcw, Check, Tags,
+  Plus, Search, Box, Image as ImageIcon, Trash2, Pencil, ArrowLeftRight, Tag, X,
+  RotateCcw, Check, Tags, MoreHorizontal, MapPin,
 } from 'lucide-vue-next'
-import { listMaterials, countMaterials, countMaterialsByCategory, listCategories, deleteMaterial, deleteMaterials, applyStock, listSuppliers, imagePublicUrl, buildCategoryTree, descendantCategoryIds, listDictItems, getCategoryParams /* , statsOverview, lowStockMaterials —— 首页统计暂停用 */ } from '../lib/db'
-import type { Category, MaterialRow, SupplierRow, CategoryParam } from '../lib/types'
+import { listMaterials, countMaterials, countMaterialsByCategory, listCategories, deleteMaterial, deleteMaterials, imagePublicUrl, buildCategoryTree, descendantCategoryIds, getCategoryParams /* , statsOverview, lowStockMaterials —— 首页统计暂停用 */ } from '../lib/db'
+import type { Category, MaterialRow, CategoryParam } from '../lib/types'
 import type { CategoryNode } from '../lib/db'
 import type { ListMaterialsOpts } from '../lib/storage'
 import { filterFieldParams } from '../lib/paramFields'
 import { withAuthRetry } from '../lib/authRetry'
-import AppSelect from '../components/form/AppSelect.vue'
 import ParamFilterBar from '../components/form/ParamFilterBar.vue'
 import MaterialFormDialog from '../components/business/MaterialFormDialog.vue'
 import LcscPickerPanel from '../components/business/LcscPickerPanel.vue'
 import { lcscLookup, type LcscComponent, type LcscHit } from '../lib/lcscApi'
 import MaterialDetailDrawer from '../components/business/MaterialDetailDrawer.vue'
 import CategoryTree from '../components/business/CategoryTree.vue'
-import Segmented from '../components/form/Segmented.vue'
+import QuickStockModal from '../components/business/QuickStockModal.vue'
+import BatchLocationModal from '../components/business/BatchLocationModal.vue'
 // [首页统计暂停用]
 // import KpiCards from '../components/KpiCards.vue'
 // import type { KpiEntry } from '../components/KpiCards.vue'
@@ -296,24 +279,8 @@ const formLcscPrice = ref<number | null>(null)
 const lcscPanel = ref<InstanceType<typeof LcscPickerPanel> | null>(null)
 const homeLcscSel = ref<LcscHit | null>(null)
 
-// 出入库弹窗
-const quick = ref<{ mat: MaterialRow; type: 'in' | 'out'; qty: number; note: string; supplier_id: string | null; purpose: string | null } | null>(null)
-const quickBusy = ref(false)
-const suppliers = ref<SupplierRow[]>([])
-let suppliersLoaded = false
-// 出库用途字典（设置 → 基础数据维护）
-const purposes = ref<string[]>([])
-let purposesLoaded = false
-
-const supplierOptions = computed(() => [
-  { value: null as string | null, label: '不记录供应商' },
-  ...suppliers.value.map(s => ({ value: s.id, label: s.name })),
-])
-
-const purposeOptions = computed(() => [
-  { value: null as string | null, label: '不记录用途' },
-  ...purposes.value.map(p => ({ value: p, label: p })),
-])
+// 出入库弹窗：表单 / 字典加载移入 business/QuickStockModal，此处只挂起目标物料
+const quickMat = ref<MaterialRow | null>(null)
 
 const tree = ref<CategoryNode[]>([])
 
@@ -502,8 +469,10 @@ function resetAll() {
 }
 
 function onDocClick(e: MouseEvent) {
-  if (!paramVisible.value) return
   const t = e.target as Node
+  // 更多菜单：点外部关闭
+  if (moreOpen.value && !moreAnchorEl.value?.contains(t)) moreOpen.value = false
+  if (!paramVisible.value) return
   if (paramAnchorEl.value?.contains(t)) return
   // 下拉浮层被 teleport 到 body，点它不算外部（否则选完一个值面板就关了）
   const pop = document.querySelector('.pop-float')
@@ -511,20 +480,35 @@ function onDocClick(e: MouseEvent) {
   closeParamAll()
 }
 function onEsc(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeParamAll()
+  if (e.key === 'Escape') { closeParamAll(); moreOpen.value = false }
 }
 
-// ===== 批量删除：多选模式 =====
+// ===== 批量操作：更多菜单（批量删除 / 一键库位）→ 多选模式 =====
 const selectMode = ref(false)
+/** 多选模式的目标操作：删除 or 设置库位（决定操作条主按钮） */
+const selectAction = ref<'delete' | 'location'>('delete')
 const selected = ref(new Set<string>())
 const selectedCount = computed(() => selected.value.size)
 /** 已加载的卡片是否已全部选中（用于「全选 / 取消全选」切换） */
 const allLoadedSelected = computed(() =>
   items.value.length > 0 && items.value.every(i => selected.value.has(i.id)))
 
-function toggleSelectMode() {
-  selectMode.value = !selectMode.value
+// 更多菜单（点外部 / Esc 关闭，选择后自动进入多选）
+const moreAnchorEl = ref<HTMLElement | null>(null)
+const moreOpen = ref(false)
+
+/** 从更多菜单进入多选模式；目标操作决定操作条主按钮 */
+function enterSelect(action: 'delete' | 'location') {
+  selectAction.value = action
+  moreOpen.value = false
+  selectMode.value = true
   selected.value.clear()
+}
+/** 退出多选模式（头部「退出批量」/ 操作条「退出」共用） */
+function exitSelectMode() {
+  selectMode.value = false
+  selected.value.clear()
+  selectAction.value = 'delete'
 }
 function toggleSelect(id: string) {
   if (selected.value.has(id)) selected.value.delete(id)
@@ -536,6 +520,21 @@ function toggleSelectAllLoaded() {
   else for (const i of items.value) selected.value.add(i.id)
 }
 function clearSelection() { selected.value.clear() }
+
+// ===== 一键库位：为选中物料批量设置库位（表单 / 字典移入 business/BatchLocationModal）=====
+/** 批量设置库位弹窗：选中的物料 id 列表（空 = 关闭） */
+const batchLocIds = ref<string[]>([])
+
+function openBatchLoc() {
+  if (!selectedCount.value) return
+  batchLocIds.value = [...selected.value]
+}
+
+/** 应用成功：退出多选并刷新 */
+async function onBatchLocApplied() {
+  exitSelectMode()
+  await load()
+}
 
 async function removeSelected() {
   const ids = [...selected.value]
@@ -550,8 +549,7 @@ async function removeSelected() {
     await deleteMaterials(ids)
     // 详情抽屉若正开着被删的物料，一并关掉
     if (detailing.value && ids.includes(detailing.value.id)) detailing.value = null
-    selectMode.value = false
-    selected.value.clear()
+    exitSelectMode()
     await load()
     void loadCatCounts()
     // void loadStats() // [首页统计暂停用]
@@ -624,45 +622,16 @@ async function onLcscPick(h: LcscHit) {
 }
 
 async function openQuick(it: MaterialRow) {
-  quick.value = { mat: it, type: 'in', qty: 1, note: '', supplier_id: null, purpose: null }
-  if (!suppliersLoaded) {
-    try { suppliers.value = await listSuppliers(); suppliersLoaded = true } catch { /* 静默 */ }
-  }
-  if (!purposesLoaded) {
-    try { purposes.value = (await listDictItems('out_purpose')).map(i => i.label); purposesLoaded = true } catch { /* 静默 */ }
-  }
+  quickMat.value = it
 }
 
-async function submitQuick() {
-  const q = quick.value
-  if (!q) return
-  const qty = Math.floor(Number(q.qty) || 0)
-  if (qty <= 0) { toast.error('数量需为正整数'); return }
-  quickBusy.value = true
-  try {
-    const fresh = await applyStock({
-      material_id: q.mat.id, type: q.type, qty,
-      currentQty: q.mat.qty,
-      supplier_id: q.type === 'in' ? q.supplier_id : null,
-      // 出库时把用途并入备注（用途优先，手动备注跟在后面）
-      note: q.type === 'out'
-        ? [q.purpose, q.note.trim()].filter(Boolean).join('：') || null
-        : (q.note.trim() || null),
-    })
-    // 同步卡片与弹窗内的库存数
-    const idx = items.value.findIndex(i => i.id === q.mat.id)
-    if (idx >= 0) items.value[idx] = { ...items.value[idx], qty: fresh.qty }
-    q.mat = { ...q.mat, qty: fresh.qty }
-    q.note = ''
-    q.qty = 1
-    q.purpose = null
-    toast.success(q.type === 'in' ? `入库 +${qty}` : `出库 -${qty}`)
-    quick.value = null
-    void loadCatCounts()
-    // void loadStats() // [首页统计暂停用] 库存 / 低库存数变了
-  }
-  catch (e: unknown) { toast.error('操作失败：' + ((e as Error).message || e)) }
-  finally { quickBusy.value = false }
+/** 出入库成功：同步卡片与抽屉里的库存数并刷新分类计数 */
+function onQuickDone(p: { materialId: string; qty: number }) {
+  const idx = items.value.findIndex(i => i.id === p.materialId)
+  if (idx >= 0) items.value[idx] = { ...items.value[idx], qty: p.qty }
+  if (detailing.value && detailing.value.id === p.materialId) detailing.value = { ...detailing.value, qty: p.qty }
+  void loadCatCounts()
+  // void loadStats() // [首页统计暂停用] 库存 / 低库存数变了
 }
 
 /** 编辑保存后：刷新列表；若抽屉开着同步最新数据 */
@@ -1088,6 +1057,54 @@ onBeforeUnmount(() => {
   background: var(--c-primary-soft);
 }
 
+/* ===== 更多菜单（批量删除 / 一键库位） ===== */
+.more-anchor {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 120px;
+  padding: 5px;
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.more-item:hover {
+  background: var(--c-surface-hover);
+}
+
+/* 批量删除：悬停飘红 */
+.more-item.danger:hover {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--c-danger);
+}
+
 /* ===== 批量操作条（紧凑高度） ===== */
 .selbar {
   display: flex;
@@ -1381,58 +1398,6 @@ onBeforeUnmount(() => {
   transform: scale(1.08);
 }
 
-/* ===== 出入库弹窗（结构用全局 .modal-mask/.modal/.seg，此处只做布局微调） ===== */
-.qk-sub {
-  margin: 4px 0 0;
-  font-size: var(--fs-sm);
-  color: var(--c-text-2);
-}
-
-.qk-seg {
-  margin-bottom: 14px;
-}
-
-.qk-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-
-/* 字段样式与 MaterialFormDialog 一致 */
-.qk-grid .field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.qk-grid .field > label {
-  font-size: var(--fs-xs);
-  color: var(--c-text-2);
-  font-weight: 500;
-}
-
-.qk-grid .field input {
-  height: var(--ctrl-h);
-  padding: 0 var(--ctrl-px);
-  font-size: var(--fs-sm);
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
-  color: var(--c-text);
-  transition: border-color var(--motion);
-}
-
-.qk-grid .field input:focus {
-  outline: none;
-  border-color: var(--c-primary);
-  box-shadow: 0 0 0 3px var(--c-primary-glow);
-}
-
-/* 备注整行 */
-.qk-grid .qk-note-field {
-  grid-column: 1 / -1;
-}
-
 /* 卡片内容区（.item > .body）：纵向排列名称 / 型号 / 参数 / 库存行 */
 .body {
   padding: 10px 12px;
@@ -1551,6 +1516,27 @@ onBeforeUnmount(() => {
 
 .qty.low {
   color: var(--c-danger);
+}
+
+/* 右侧分组：库位紧贴价格左侧 */
+.row-r {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.loc {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 3px;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--c-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 72px;
 }
 
 .price {

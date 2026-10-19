@@ -64,6 +64,16 @@ export interface ApplyStockInput extends StockInput {
   currentQty: number
 }
 
+/** 批量出入库单项（导入入库等场景）：库存基线由 store 读库获取，不依赖前端缓存 */
+export interface ApplyStockBatchItem {
+  material_id: string
+  type: 'in' | 'out'
+  qty: number
+  /** 入库时记录的供应商（type=in 时有效） */
+  supplier_id?: string | null
+  note?: string | null
+}
+
 /** 撤销出入库输入 */
 export interface VoidStockLogInput {
   /** 流水 id */
@@ -197,6 +207,11 @@ export interface DataStore {
   /** 出入库记录分页（筛选 + 总数，避免云端一次性拉全表） */
   listStockLogPage(opts?: StockLogPageOpts): Promise<PageResult<StockLog>>
   applyStock(input: ApplyStockInput): Promise<MaterialRow>
+  /**
+   * 批量出入库：一次写完所有流水并按物料聚合更新库存，减少网络往返。
+   * 返回 material_id → 入账后最新库存 的映射；任一物料库存不足则整体抛错不落库。
+   */
+  applyStockBatch(items: ApplyStockBatchItem[]): Promise<Map<string, number>>
   /** 撤销出入库：流水保留但置为已撤销，库存反向回滚 */
   voidStockLog(input: VoidStockLogInput): Promise<StockLog>
   /** 批量撤销出入库：共用一条原因，逐条撤销并回滚库存 */

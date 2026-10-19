@@ -8,7 +8,7 @@ import { getAppSettings, type DataMode } from '../appSettings'
 
 export type { DataStore } from './types'
 export type {
-  ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
   VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,

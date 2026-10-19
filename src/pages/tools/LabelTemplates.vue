@@ -91,8 +91,8 @@
                 </label>
               </div>
               <div class="basic-preview">
-                <LabelPreview :blocks="previewBlocks" :rows="draft.grid_rows" :cols="draft.grid_cols" :width-mm="draft.width_mm"
-                  :height-mm="draft.height_mm" />
+                <LabelPreview :blocks="previewBlocks" :rows="draft.grid_rows" :cols="draft.grid_cols"
+                  :width-mm="draft.width_mm" :height-mm="draft.height_mm" />
               </div>
             </div>
             <p class="tip">此处为打印纸上的标签尺寸配置，栅格指当前标签中的布局</p>
@@ -115,6 +115,7 @@
               <span class="muted">{{ c.blocks.length }} 块</span>
               <span class="cat-ops">
                 <button class="btn btn-ghost mini" @click="openEditCat(i)">配置</button>
+                <button class="btn btn-ghost mini" @click="copyCat(i)">复制</button>
                 <button class="btn btn-ghost mini danger" @click="removeCat(i)">删除</button>
               </span>
             </div>
@@ -286,6 +287,16 @@ function openEditCat(i: number) {
   dlgCat.value = JSON.parse(JSON.stringify(c)) as LabelCatConfig
   dlgOpen.value = true
 }
+/** 复制某条分类配置：克隆字段布局与排序，分类置空待另选（保存弹框时会查重） */
+function copyCat(i: number) {
+  const c = draft.value?.cats[i]
+  if (!c) return
+  dlgEditingIdx.value = null
+  const copy = JSON.parse(JSON.stringify(c)) as LabelCatConfig
+  copy.category_id = ''
+  dlgCat.value = copy
+  dlgOpen.value = true
+}
 function closeDlg() { dlgOpen.value = false }
 function onDlgSave(cat: LabelCatConfig) {
   const d = draft.value
@@ -300,7 +311,11 @@ function onDlgSave(cat: LabelCatConfig) {
     }
     d.cats.push(cat)
   } else {
-    d.cats[dlgEditingIdx.value] = cat
+    // 编辑也要查重：改成其他行已配置的分类 / 把普通行改成第二个默认，都不允许
+    const idx = dlgEditingIdx.value
+    const dup = d.cats.some((c, j) => j !== idx && (c.category_id || '') === (cat.category_id || ''))
+    if (dup) { toast.warning(cat.category_id ? '该分类已配置过' : '已存在默认格式'); return }
+    d.cats[idx] = cat
   }
   dlgOpen.value = false
 }
@@ -484,9 +499,25 @@ function revert() {
   if (t) selectTpl(t)
 }
 
+/** 分类查重：同一模板内 category_id 不得重复，默认格式（空分类）仅一份；有重复返回提示文案 */
+function dupCatMsg(): string | null {
+  const d = draft.value
+  if (!d) return null
+  const seen = new Set<string>()
+  for (const c of d.cats) {
+    const key = c.category_id || '__default__'
+    if (seen.has(key)) return c.category_id ? `分类「${catLabel(c.category_id)}」配置重复` : '存在多个默认格式配置'
+    seen.add(key)
+  }
+  return null
+}
+
 async function save() {
   const d = draft.value
   if (!d || !canSave.value) return
+  // 兜底查重：弹框层已拦截，这里防止历史数据 / 其他路径漏进的重复分类存库
+  const dup = dupCatMsg()
+  if (dup) { toast.warning(`${dup}，请先修改后再保存`); return }
   saving.value = true
   try {
     const payload: Partial<LabelTemplate> = {
@@ -656,6 +687,9 @@ onMounted(async () => {
 .tpl-item.on {
   background: var(--c-primary-soft);
   border-color: rgba(79, 140, 255, 0.35);
+  max-height: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tpl-line {

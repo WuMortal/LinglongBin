@@ -14,7 +14,7 @@
 import Database from '@tauri-apps/plugin-sql'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import type {
-  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
   VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
@@ -296,7 +296,7 @@ const MIGRATE_COLUMNS: Array<{ table: string; column: string }> = [
 
 /*
  * 内置标签模板种子：新库首次启动时写入，之后不再覆盖（可改、不可删）。
- * 内容与 script/sqlite/0001_init.sql 第 9 段保持一致 —— 两处都改时要同步。
+ * 种子只在 App 层维护，SQL 初始化脚本已不含。
  * 只种一份「默认格式」（category_id 为空 = 未匹配分类时的兜底），不含任何本机分类 id / 参数 key。
  */
 const BUILTIN_TPL_CATS = '[{"category_id":"","blocks":[{"id":"b-name","type":"field","field":"name","x":0,"y":0,"w":4,"h":1,"align":"center","valign":"middle","auto_shrink":true,"font_pt":6},{"id":"b-brand","type":"field","field":"brand","x":0,"y":1,"w":2,"h":1,"align":"left","valign":"middle","auto_shrink":true,"font_pt":6},{"id":"b-model","type":"field","field":"model","x":2,"y":1,"w":2,"h":1,"align":"left","valign":"middle","auto_shrink":true,"font_pt":6},{"id":"b-partno","type":"field","field":"part_no","x":0,"y":2,"w":2,"h":1,"align":"left","valign":"middle","auto_shrink":true,"font_pt":6},{"id":"b-location","type":"field","field":"location","x":2,"y":2,"w":2,"h":1,"align":"left","valign":"middle","auto_shrink":true,"font_pt":6}],"sort_mode":"cat","sort_field":null,"sort_dir":"asc"}]'
@@ -656,7 +656,7 @@ export class SqliteStore implements DataStore {
         await db.execute(`update stock_log set status = 'normal' where status is null or status = ''`)
         // 迁移完成后再建索引（避免列缺失时建索引报错）
         try { await db.execute(INDEXES_SQL) } catch { /* 旧库兼容，忽略索引错误 */ }
-        // 内置标签模板：清库 / 新装时自动写入（种子也在 script/sqlite/0001_init.sql，二者等价）
+        // 内置标签模板：清库 / 新装时自动写入（种子只在 App 层，SQL 初始化脚本不含）
         try { await seedBuiltinLabelTemplate(db) } catch { /* 种子失败不阻塞启动 */ }
         // 缓存 resource 目录（图片相对路径 → asset URL 用）；去掉 Windows canonicalize 的 \\?\ 前缀
         resourceDir = (await invoke<string>('get_resource_dir')).replace(/^\\\\\?\\/, '').replace(/\\/g, '/')
@@ -826,11 +826,15 @@ export class SqliteStore implements DataStore {
     }
     if (location) { where.push('c.location = ?'); params.push(location) }
     if (search && search.trim()) {
-      const kws = search.trim().split(/\s+/)
-      for (const k of kws) {
-        where.push('(c.name like ? or c.model like ? or c.brand like ? or c.package like ?)')
-        const kw = `%${k}%`
-        params.push(kw, kw, kw, kw)
+      // 多商品查询：空格 / 逗号分隔多个词，任一词命中即返回（词间 OR），如一次查 C123,C456
+      const kws = search.trim().split(/[\s,，]+/).filter(Boolean)
+      if (kws.length) {
+        const perKw = '(c.name like ? or c.model like ? or c.brand like ? or c.package like ? or c.part_no like ?)'
+        where.push(`(${kws.map(() => perKw).join(' or ')})`)
+        for (const k of kws) {
+          const kw = `%${k}%`
+          params.push(kw, kw, kw, kw, kw)
+        }
       }
     }
     if (paramFilter) {
@@ -869,11 +873,15 @@ export class SqliteStore implements DataStore {
     }
     if (location) { where.push('c.location = ?'); params.push(location) }
     if (search && search.trim()) {
-      const kws = search.trim().split(/\s+/)
-      for (const k of kws) {
-        where.push('(c.name like ? or c.model like ? or c.brand like ? or c.package like ?)')
-        const kw = `%${k}%`
-        params.push(kw, kw, kw, kw)
+      // 多商品查询：空格 / 逗号分隔多个词，任一词命中即返回（词间 OR），如一次查 C123,C456
+      const kws = search.trim().split(/[\s,，]+/).filter(Boolean)
+      if (kws.length) {
+        const perKw = '(c.name like ? or c.model like ? or c.brand like ? or c.package like ? or c.part_no like ?)'
+        where.push(`(${kws.map(() => perKw).join(' or ')})`)
+        for (const k of kws) {
+          const kw = `%${k}%`
+          params.push(kw, kw, kw, kw, kw)
+        }
       }
     }
     if (paramFilter) {
@@ -1351,6 +1359,57 @@ export class SqliteStore implements DataStore {
       qty: input.qty, supplier_id: input.supplier_id ?? null, note: input.note,
     })
     return await this.updateMaterial(input.material_id, { qty: next })
+  }
+
+  /**
+   * 批量出入库：库存基线按物料读库获取（不依赖前端缓存），同一物料多条流水
+   * 合并计算终值；一条多值 insert 写完全部流水，再逐物料更新 qty。
+   * 任一物料库存不足 / 数量非法则整体抛错，不写任何数据。
+   */
+  async applyStockBatch(items: ApplyStockBatchItem[]): Promise<Map<string, number>> {
+    if (!items.length) return new Map()
+    const db = await this.ensure()
+    const owner = await this.getOwnerId()
+    const ids = [...new Set(items.map(i => i.material_id))]
+    const mats = await this.getMaterialsByIds(ids)
+    const byId = new Map(mats.map(m => [m.id, m]))
+    if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
+
+    // 累加校验：出库超出当前库存整体拦截（负库存兜底）
+    const finals = new Map<string, number>()
+    for (const it of items) {
+      if (!(it.qty > 0)) throw new Error('出入库数量必须大于 0')
+      const base = finals.get(it.material_id) ?? (Number(byId.get(it.material_id)?.qty) || 0)
+      const next = base + (it.type === 'in' ? it.qty : -it.qty)
+      if (next < 0) {
+        const name = byId.get(it.material_id)?.name ?? it.material_id
+        throw new Error(`「${name}」出库数量 ${it.qty} 超过当前库存 ${base}`)
+      }
+      finals.set(it.material_id, next)
+    }
+
+    // 多值 insert 写入全部流水（分块提交，避免触碰 SQLite 变量数上限）
+    const CHUNK = 500
+    for (let i = 0; i < items.length; i += CHUNK) {
+      const chunk = items.slice(i, i + CHUNK)
+      const params: unknown[] = []
+      for (const it of chunk) {
+        params.push(
+          uuid(), owner, it.material_id, it.type, it.qty,
+          it.type === 'in' ? (it.supplier_id ?? null) : null, it.note ?? null, now(),
+        )
+      }
+      await db.execute(
+        `insert into stock_log (id, owner, material_id, type, qty, supplier_id, note, status, created_at)
+         values ${chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, 'normal', ?)").join(', ')}`,
+        params,
+      )
+    }
+    // 逐物料更新库存（去重后的物料，条数远少于流水）
+    for (const [id, qty] of finals) {
+      await db.execute('update materials set qty = ? where id = ?', [qty, id])
+    }
+    return finals
   }
 
   /** 单条撤销的内部实现：校验状态 → 回滚库存 → 置为已撤销 */
@@ -2030,7 +2089,7 @@ export class SqliteStore implements DataStore {
 
   async deleteLabelTemplate(id: string): Promise<void> {
     const db = await this.ensure()
-    // 内置模板不可删除（脚本种子写入，见 script/sqlite/0001_init.sql 第 9 段）
+    // 内置模板不可删除（App 启动时种子写入，见 seedBuiltinLabelTemplate）
     const rows = await db.select<{ builtin: number | null }[]>(
       'select builtin from label_templates where id = ?', [id],
     )

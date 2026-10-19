@@ -16,132 +16,150 @@
     </div>
 
     <template v-else>
-    <div class="kpis">
-      <div class="kpi">
-        <div class="kpi-ico blue"><Box :size="22" style="display: inline-flex; flex-shrink: 0" /></div>
-        <div class="kpi-body">
-          <span class="label">物料种类</span>
-          <b>{{ ov.totalMaterials }}</b>
-          <span class="trend">SKU 总数</span>
-        </div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-ico teal"><Inbox :size="22" style="display: inline-flex; flex-shrink: 0" /></div>
-        <div class="kpi-body">
-          <span class="label">库存总量</span>
-          <b>{{ ov.totalQty }}</b>
-          <span class="trend">件物料</span>
-        </div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-ico gold"><Tag :size="22" style="display: inline-flex; flex-shrink: 0" /></div>
-        <div class="kpi-body">
-          <span class="label">库存总价值</span>
-          <b>¥{{ ov.totalValue.toFixed(0) }}</b>
-          <span class="trend">按单价估算</span>
-        </div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-ico red"><TriangleAlert :size="22" style="display: inline-flex; flex-shrink: 0" /></div>
-        <div class="kpi-body">
-          <span class="label">低库存预警</span>
-          <b>{{ low.length }}</b>
-          <span class="trend">需补货</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="scroll-area">
-    <div class="charts">
-      <div class="chart-card card">
-        <div class="chart-head">
-          <h3>分类占比</h3>
-          <span class="chart-sub">按数量</span>
-        </div>
-        <div ref="pieEl" class="echart"></div>
-      </div>
-      <div class="chart-card card">
-        <div class="chart-head">
-          <h3>出入库趋势</h3>
-          <div class="legend-mini">
-            <span class="li in"><i></i>入库</span>
-            <span class="li out"><i></i>出库</span>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpi-ico blue">
+            <Box :size="22" style="display: inline-flex; flex-shrink: 0" />
+          </div>
+          <div class="kpi-body">
+            <span class="label">物料种类</span>
+            <b>{{ ov.totalMaterials }}</b>
+            <span class="trend">SKU 总数</span>
           </div>
         </div>
-        <div ref="barEl" class="echart"></div>
+        <div class="kpi">
+          <div class="kpi-ico teal">
+            <Inbox :size="22" style="display: inline-flex; flex-shrink: 0" />
+          </div>
+          <div class="kpi-body">
+            <span class="label">库存总量</span>
+            <b>{{ ov.totalQty }}</b>
+            <span class="trend">件物料</span>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-ico gold">
+            <Tag :size="22" style="display: inline-flex; flex-shrink: 0" />
+          </div>
+          <div class="kpi-body">
+            <span class="label">库存总价值</span>
+            <b>¥{{ ov.totalValue.toFixed(0) }}</b>
+            <span class="trend">按单价估算</span>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-ico red">
+            <TriangleAlert :size="22" style="display: inline-flex; flex-shrink: 0" />
+          </div>
+          <div class="kpi-body">
+            <span class="label">低库存预警</span>
+            <b>{{ low.length }}</b>
+            <span class="trend">需补货</span>
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div class="card low-card">
-      <div class="card-head">
-        <h3><TriangleAlert :size="16" class="alert-ico" style="display: inline-flex; flex-shrink: 0" />低库存预警</h3>
-        <div class="head-actions">
-          <span class="count-badge">{{ low.length }}</span>
-          <!-- <button class="btn btn-primary mini" :disabled="!low.length || genBusy" @click="genPoFromLow">
+      <div class="scroll-area">
+        <div class="charts">
+          <div class="chart-card card">
+            <div class="chart-head">
+              <h3>分类占比</h3>
+              <div v-if="pieDrill" class="pie-crumb">
+                <button class="btn btn-ghost mini" @click="backToMajors">
+                  <ChevronLeft :size="13" style="display: inline-flex; flex-shrink: 0" />
+                </button>
+                <span class="pie-crumb-cur" :title="pieDrill.name">{{ pieDrill.name }}</span>
+              </div>
+              <span v-else class="chart-sub">按数量</span>
+            </div>
+            <div ref="pieEl" class="echart"></div>
+          </div>
+          <div class="chart-card card">
+            <div class="chart-head">
+              <h3>出入库趋势</h3>
+              <div class="legend-mini">
+                <span class="li in"><i></i>入库</span>
+                <span class="li out"><i></i>出库</span>
+              </div>
+            </div>
+            <div ref="barEl" class="echart"></div>
+          </div>
+        </div>
+
+        <div class="card low-card">
+          <div class="card-head">
+            <h3>
+              <TriangleAlert :size="16" class="alert-ico" style="display: inline-flex; flex-shrink: 0" />低库存预警
+            </h3>
+            <div class="head-actions">
+              <span class="count-badge">{{ low.length }}</span>
+              <!-- <button class="btn btn-primary mini" :disabled="!low.length || genBusy" @click="genPoFromLow">
             <ListChecks :size="14" style="display: inline-flex; flex-shrink: 0" />一键生成采购单
           </button> -->
-        </div>
-      </div>
-      <template v-if="loading"><div class="hint"><div class="spinner-lg" /></div></template>
-      <template v-else>
-        <table v-if="low.length">
-          <thead><tr><th>名称</th><th>型号</th><th>库存</th><th>阈值</th><th>缺口</th></tr></thead>
-          <tbody>
-            <tr v-for="c in low" :key="c.id">
-              <td class="name">{{ c.name }}</td>
-              <td class="mono">{{ c.model || '—' }}</td>
-              <td class="bad">{{ c.qty }}</td>
-              <td>{{ c.threshold }}</td>
-              <td class="gap">缺 {{ Math.max(0, c.threshold - c.qty) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-else class="ok-state">
-          <div class="ok-ico"><Check :size="28" style="display: inline-flex; flex-shrink: 0" /></div>
-          <p>库存充足，无预警</p>
-        </div>
-      </template>
-    </div>
-      <div class="card low-card">
-        <div class="card-head">
-          <h3><Clock :size="16" style="display: inline-flex; flex-shrink: 0" />呆滞料 <span class="muted">(180 天未动)</span></h3>
-          <span class="count-badge">{{ stagnant.length }}</span>
-        </div>
-        <template v-if="loading"><div class="hint"><div class="spinner-lg" /></div></template>
-        <template v-else>
-          <table v-if="stagnant.length">
-            <thead><tr><th>名称</th><th>型号</th><th>库存</th><th>未动天数</th><th>最近出入库</th></tr></thead>
-            <tbody>
-              <tr v-for="c in stagnant.slice(0, 30)" :key="c.id">
-                <td class="name">{{ c.name }}</td>
-                <td class="mono">{{ c.model || '—' }}</td>
-                <td>{{ c.qty }}</td>
-                <td class="gap">{{ c.days }} 天</td>
-                <td class="mono">{{ c.last_move ? c.last_move.slice(0, 10) : '无记录' }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-else class="ok-state">
-            <div class="ok-ico"><Check :size="28" style="display: inline-flex; flex-shrink: 0" /></div>
-            <p>无呆滞料，库存活跃</p>
+            </div>
           </div>
-        </template>
+          <template v-if="loading">
+            <div class="hint">
+              <div class="spinner-lg" />
+            </div>
+          </template>
+          <template v-else>
+            <DataTable v-if="low.length" :columns="lowCols" :rows="low" row-key="id" :clickable="false">
+              <template #cell-model="{ row }"><span class="mono">{{ row.model || '—' }}</span></template>
+              <template #cell-qty="{ row }"><span class="bad">{{ row.qty }}</span></template>
+              <template #cell-lack="{ row }"><span class="gap">缺 {{ Math.max(0, row.threshold - row.qty) }}</span></template>
+            </DataTable>
+            <div v-else class="ok-state">
+              <div class="ok-ico">
+                <Check :size="28" style="display: inline-flex; flex-shrink: 0" />
+              </div>
+              <p>库存充足，无预警</p>
+            </div>
+          </template>
+        </div>
+        <div class="card low-card">
+          <div class="card-head">
+            <h3>
+              <Clock :size="16" style="display: inline-flex; flex-shrink: 0" />呆滞料 <span class="muted">(180 天未动)</span>
+            </h3>
+            <span class="count-badge">{{ stagnant.length }}</span>
+          </div>
+          <template v-if="loading">
+            <div class="hint">
+              <div class="spinner-lg" />
+            </div>
+          </template>
+          <template v-else>
+            <DataTable v-if="stagnantTop.length" :columns="stagnantCols" :rows="stagnantTop" row-key="id" :clickable="false">
+              <template #cell-model="{ row }"><span class="mono">{{ row.model || '—' }}</span></template>
+              <template #cell-days="{ row }"><span class="gap">{{ row.days }} 天</span></template>
+              <template #cell-last_move="{ row }"><span class="mono">{{ row.last_move ? row.last_move.slice(0, 10) : '无记录' }}</span></template>
+            </DataTable>
+            <div v-else class="ok-state">
+              <div class="ok-ico">
+                <Check :size="28" style="display: inline-flex; flex-shrink: 0" />
+              </div>
+              <p>无呆滞料，库存活跃</p>
+            </div>
+          </template>
+        </div>
       </div>
-    </div>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { RefreshCw, Box, Inbox, Tag, TriangleAlert, Check, Clock, ListChecks } from 'lucide-vue-next'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import DataTable from '../components/DataTable.vue'
+import type { DtColumn } from '../components/DataTable.vue'
+import { RefreshCw, Box, Inbox, Tag, TriangleAlert, Check, Clock, ListChecks, ChevronLeft } from 'lucide-vue-next'
 import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { statsOverview, statsByCategory, stockTrend, lowStockMaterials, stagnantMaterials, createPurchaseOrder, createPurchaseItems } from '../lib/db'
+import { statsOverview, statsByCategory, stockTrend, lowStockMaterials, stagnantMaterials, createPurchaseOrder, createPurchaseItems, listCategories } from '../lib/db'
 import { assertRepoUrl } from '../lib/strKit'
-import type { StagnantRow } from '../lib/types'
+import type { StagnantRow, Category } from '../lib/types'
 import { confirm } from '../composables/confirm'
 
 echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
@@ -150,12 +168,38 @@ const loading = ref(false)
 const ov = ref<{ totalMaterials: number; totalQty: number; totalValue: number }>({ totalMaterials: 0, totalQty: 0, totalValue: 0 })
 const low = ref<Awaited<ReturnType<typeof lowStockMaterials>>>([])
 const stagnant = ref<StagnantRow[]>([])
+const stagnantTop = computed(() => stagnant.value.slice(0, 30))
 const genBusy = ref(false)
+
+/** 低库存预警表列 */
+const lowCols: DtColumn[] = [
+  { key: 'name', label: '名称' },
+  { key: 'model', label: '型号' },
+  { key: 'qty', label: '库存' },
+  { key: 'threshold', label: '阈值' },
+  { key: 'lack', label: '缺口' },
+]
+/** 呆滞料表列 */
+const stagnantCols: DtColumn[] = [
+  { key: 'name', label: '名称' },
+  { key: 'model', label: '型号' },
+  { key: 'qty', label: '库存' },
+  { key: 'days', label: '未动天数' },
+  { key: 'last_move', label: '最近出入库' },
+]
 const pieEl = ref<HTMLElement | null>(null)
 const barEl = ref<HTMLElement | null>(null)
 type EChartsInstance = ReturnType<typeof echarts.init>
 let pie: EChartsInstance | null = null
 let bar: EChartsInstance | null = null
+
+// ===== 分类占比：大类 → 小类 下钻 =====
+/** 小类维度的统计行（statsByCategory 原始结果） */
+const catStats = ref<Awaited<ReturnType<typeof statsByCategory>>>([])
+/** 全量分类（取 parent 关系做大类归并） */
+const catAll = ref<Category[]>([])
+/** 当前下钻的大类；null = 大类占比视图 */
+const pieDrill = ref<{ id: string; name: string } | null>(null)
 
 const PIE_COLORS = ['#4F8CFF', '#34DABF', '#FFA94D', '#FF6B6B', '#B197FC', '#74C0FC', '#69DB7C', '#FF8787']
 
@@ -165,18 +209,73 @@ async function load() {
   assertRepoUrl()
   try {
     ov.value = await statsOverview()
-    const cats = await statsByCategory()
+    const [stats, cats] = await Promise.all([statsByCategory(), listCategories()])
     const trend = await stockTrend(14)
     low.value = await lowStockMaterials()
     stagnant.value = await stagnantMaterials(180)
-    renderPie(cats)
+    catStats.value = stats
+    catAll.value = cats
+    renderPie()
     renderBar(trend)
   } catch (e) { console.error(e) }
   finally { loading.value = false }
 }
 
-function renderPie(cats: Awaited<ReturnType<typeof statsByCategory>>) {
+/** 大类聚合：小类统计行按 parent 归并到所属大类（未挂分类 / 分类已删归「未分类」） */
+function majorRows() {
+  const byId = new Map(catAll.value.map(c => [c.id, c]))
+  const map = new Map<string, { name: string; qty: number; drillable: boolean }>()
+  for (const r of catStats.value) {
+    const cat = byId.get(r.id)
+    const majorId = cat?.parent || cat?.id || 'none'
+    let e = map.get(majorId)
+    if (!e) {
+      e = {
+        name: majorId === 'none' ? '未分类' : (byId.get(majorId)?.name || cat?.name || '未分类'),
+        qty: 0,
+        drillable: false,
+      }
+      map.set(majorId, e)
+    }
+    e.qty += r.qty
+    // 有真小类（挂在 parent 下的分类）才允许下钻
+    if (cat?.parent) e.drillable = true
+  }
+  return [...map.entries()]
+    .map(([id, v]) => ({ id, ...v }))
+    .filter(v => v.qty > 0)
+    .sort((a, b) => b.qty - a.qty)
+}
+
+/** 某大类下的小类统计行（含直接挂在大类上的物料行，展示为该大类名） */
+function minorRows(majorId: string) {
+  const byId = new Map(catAll.value.map(c => [c.id, c]))
+  return catStats.value
+    .filter(r => {
+      const cat = byId.get(r.id)
+      return cat ? (cat.parent || cat.id) === majorId : false
+    })
+    .filter(r => r.qty > 0)
+    .sort((a, b) => b.qty - a.qty)
+}
+
+/** 面包屑返回大类视图 */
+function backToMajors() {
+  if (!pieDrill.value) return
+  pieDrill.value = null
+  renderPie()
+}
+
+function renderPie() {
   if (!pieEl.value) return
+  // 下钻大类已无数据时自动回到大类视图（如刷新后分类被清空）
+  let drilled = pieDrill.value
+  let rows: Array<{ id: string; name: string; qty: number; drillable?: boolean }>
+  if (drilled) {
+    const minors = minorRows(drilled.id)
+    if (!minors.length) { drilled = null; pieDrill.value = null; rows = majorRows() }
+    else rows = minors
+  } else rows = majorRows()
   if (pie) pie.dispose()
   pie = echarts.init(pieEl.value, null, { renderer: 'canvas' })
   pie.setOption({
@@ -198,8 +297,20 @@ function renderPie(cats: Awaited<ReturnType<typeof statsByCategory>>) {
         formatter: '{b}\n{d}%'
       },
       labelLine: { lineStyle: { color: '#495057' } },
-      data: cats.map((c, i) => ({ name: c.name, value: c.qty, itemStyle: { color: PIE_COLORS[i % PIE_COLORS.length] } }))
+      data: rows.map((r, i) => ({
+        name: r.name, value: r.qty,
+        _id: r.id, _drillable: !drilled && !!r.drillable,
+        itemStyle: { color: PIE_COLORS[i % PIE_COLORS.length] }
+      }))
     }]
+  })
+  // 点击大类扇区 → 下钻查看小类占比
+  pie.on('click', p => {
+    const d = p.data as { _id?: string; _drillable?: boolean; name?: string } | null | undefined
+    if (!pieDrill.value && d?._drillable && d._id) {
+      pieDrill.value = { id: d._id, name: d.name || '' }
+      renderPie()
+    }
   })
 }
 function renderBar(trend: Awaited<ReturnType<typeof stockTrend>>) {
@@ -275,86 +386,343 @@ async function genPoFromLow() {
 </script>
 
 <style scoped>
-.page { height: 100%; display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
-.page > .head, .page > .kpis { flex-shrink: 0; }
-.page > .scroll-area { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding-bottom: 8px; }
-.page > .scroll-area::-webkit-scrollbar { width: 4px; }
-.page > .scroll-area::-webkit-scrollbar-thumb { background: var(--c-border-strong); border-radius: 999px; }
+.page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow: hidden;
+}
 
-.head { display: flex; justify-content: space-between; align-items: flex-end; }
-.head h1 { margin: 0; font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; }
-.head p { margin: 4px 0 0; color: var(--c-text-2); font-size: var(--fs-sm); }
+.page>.head,
+.page>.kpis {
+  flex-shrink: 0;
+}
 
-.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.page>.scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 8px;
+}
+
+.page>.scroll-area::-webkit-scrollbar {
+  width: 4px;
+}
+
+.page>.scroll-area::-webkit-scrollbar-thumb {
+  background: var(--c-border-strong);
+  border-radius: 999px;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.head p {
+  margin: 4px 0 0;
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
 .kpi {
-  background: var(--c-surface); border: 1px solid var(--c-border);
-  border-radius: var(--r-xl); padding: 16px 18px;
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  display: flex; align-items: center; gap: 14px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-xl);
+  padding: 16px 18px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
   transition: all var(--motion);
 }
-.kpi:hover { background: var(--c-surface-hover); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+.kpi:hover {
+  background: var(--c-surface-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
 .kpi-ico {
-  width: 44px; height: 44px; border-radius: var(--r-md);
-  display: grid; place-items: center; flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
 }
-.kpi-ico.blue { background: linear-gradient(135deg, rgba(79,140,255,0.2), rgba(79,140,255,0.08)); color: #4F8CFF; }
-.kpi-ico.teal { background: linear-gradient(135deg, rgba(52,218,191,0.2), rgba(52,218,191,0.08)); color: #34DABF; }
-.kpi-ico.gold { background: linear-gradient(135deg, rgba(255,169,77,0.2), rgba(255,169,77,0.08)); color: #FFA94D; }
-.kpi-ico.red { background: linear-gradient(135deg, rgba(255,107,107,0.2), rgba(255,107,107,0.08)); color: #FF6B6B; }
-.kpi-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.kpi-body .label { font-size: var(--fs-xs); color: var(--c-text-2); }
-.kpi-body b { font-size: var(--fs-xl); font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; }
-.kpi-body .trend { font-size: 10px; color: var(--c-text-3); }
 
-.charts { display: grid; grid-template-columns: 1fr 1.4fr; gap: 12px; }
-.chart-card { padding: 18px; display: flex; flex-direction: column; min-width: 0; }
-.chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.chart-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
-.chart-sub { font-size: var(--fs-xs); color: var(--c-text-3); background: var(--c-glass); padding: 3px 10px; border-radius: 999px; border: 1px solid var(--c-border); }
-.legend-mini { display: flex; gap: 14px; }
-.li { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--c-text-2); }
-.li i { width: 8px; height: 8px; border-radius: 2px; display: block; }
-.li.in i { background: #34DABF; }
-.li.out i { background: #FF6B6B; }
-.echart { width: 100%; height: 240px; }
-
-.low-card { padding: 20px; }
-.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-.card-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
-.alert-ico { color: var(--c-danger); }
-.count-badge { background: rgba(255,107,107,0.12); color: var(--c-danger); padding: 3px 10px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; }
-
-.hint { display: grid; place-items: center; padding: 40px; }
-.spinner-lg { width: 28px; height: 28px; border: 3px solid var(--c-border); border-top-color: var(--c-primary); border-radius: 50%; animation: spin 0.7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
-thead th {
-  text-align: left; padding: 8px 12px; color: var(--c-text-3); font-weight: 600; font-size: var(--fs-xs);
-  text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--c-border-hairline);
+.kpi-ico.blue {
+  background: linear-gradient(135deg, rgba(79, 140, 255, 0.2), rgba(79, 140, 255, 0.08));
+  color: #4F8CFF;
 }
-tbody td { padding: 10px 12px; border-bottom: 1px solid var(--c-border-hairline); }
-tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--c-surface-hover); }
-.name { font-weight: 500; }
-.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: var(--fs-xs); color: var(--c-text-2); }
-.bad { color: var(--c-danger); font-weight: 700; font-size: var(--fs-md); }
-.gap { color: var(--c-warning); font-size: var(--fs-xs); font-weight: 500; }
 
-.ok-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 32px; color: var(--c-text-2); }
-.ok-ico { width: 56px; height: 56px; border-radius: 50%; background: rgba(52,218,191,0.12); color: var(--c-accent); display: grid; place-items: center; }
-.ok-state p { margin: 0; font-size: var(--fs-sm); }
+.kpi-ico.teal {
+  background: linear-gradient(135deg, rgba(52, 218, 191, 0.2), rgba(52, 218, 191, 0.08));
+  color: #34DABF;
+}
 
-.head-actions { display: flex; align-items: center; gap: 10px; }
-.muted { color: var(--c-text-3); font-weight: 400; font-size: var(--fs-xs); }
-.btn.mini { padding: 5px 10px; font-size: var(--fs-xs); }
+.kpi-ico.gold {
+  background: linear-gradient(135deg, rgba(255, 169, 77, 0.2), rgba(255, 169, 77, 0.08));
+  color: #FFA94D;
+}
+
+.kpi-ico.red {
+  background: linear-gradient(135deg, rgba(255, 107, 107, 0.2), rgba(255, 107, 107, 0.08));
+  color: #FF6B6B;
+}
+
+.kpi-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kpi-body .label {
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+
+.kpi-body b {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.kpi-body .trend {
+  font-size: 10px;
+  color: var(--c-text-3);
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+}
+
+.chart-card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; min-height: 32px; }
+
+.chart-head h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.chart-sub {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  background: var(--c-glass);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--c-border);
+}
+
+.pie-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pie-crumb .btn.mini { height: 24px; padding: 0 8px; }
+
+.pie-crumb-sep {
+  color: var(--c-text-3);
+  font-size: var(--fs-xs);
+}
+
+.pie-crumb-cur {
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  font-weight: 600;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-mini {
+  display: flex;
+  gap: 14px;
+}
+
+.li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+
+.li i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: block;
+}
+
+.li.in i {
+  background: #34DABF;
+}
+
+.li.out i {
+  background: #FF6B6B;
+}
+
+.echart {
+  width: 100%;
+  height: 240px;
+}
+
+.low-card {
+  padding: 20px;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.card-head h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.alert-ico {
+  color: var(--c-danger);
+}
+
+.count-badge {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--c-danger);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.hint {
+  display: grid;
+  place-items: center;
+  padding: 40px;
+}
+
+.spinner-lg {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--c-border);
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+
+.bad {
+  color: var(--c-danger);
+  font-weight: 700;
+  font-size: var(--fs-md);
+}
+
+.gap {
+  color: var(--c-warning);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.ok-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--c-text-2);
+}
+
+.ok-ico {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(52, 218, 191, 0.12);
+  color: var(--c-accent);
+  display: grid;
+  place-items: center;
+}
+
+.ok-state p {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.muted {
+  color: var(--c-text-3);
+  font-weight: 400;
+  font-size: var(--fs-xs);
+}
+
+.btn.mini {
+  padding: 5px 10px;
+  font-size: var(--fs-xs);
+  height: 20px;
+}
 
 @media (max-width: 900px) {
-  .kpis { grid-template-columns: repeat(2, 1fr); }
-  .charts { grid-template-columns: 1fr; }
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .charts {
+    grid-template-columns: 1fr;
+  }
 }
+
 @media (max-width: 520px) {
-  .kpis { grid-template-columns: 1fr; }
+  .kpis {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

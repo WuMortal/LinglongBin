@@ -6,7 +6,7 @@ import type {
   LabelTemplate, StockTake, StockTakeItem, StagnantRow,
 } from '../types'
 import type {
-  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, VoidStockLogInput,
+  DataStore, ListMaterialsOpts, StockInput, ApplyStockInput, ApplyStockBatchItem, VoidStockLogInput,
   VoidStockLogsInput, VoidStockLogsResult,
   UploadResult, StatsOverview, StatsCategoryRow, LowStockRow, TrendRow, StockSummaryRow,
   PageResult, StockLogPageOpts, PurchaseOrderPageOpts,
@@ -204,9 +204,12 @@ export class SupabaseStore implements DataStore {
     else if (categoryIds && categoryIds.length) q = q.in('category_id', categoryIds)
     if (location) q = q.eq('location', location)
     if (search && search.trim()) {
-      const kw = search.trim().split(/\s+/)
-      for (const k of kw) {
-        q = q.or(`name.ilike.%${k}%,model.ilike.%${k}%,brand.ilike.%${k}%,package.ilike.%${k}%`)
+      // 多商品查询：空格 / 逗号分隔多个词，任一词命中即返回。
+      // 注意多个 .or() 会被 PostgREST AND 组合，必须拼成单条 or（内全为 OR）
+      const kw = search.trim().split(/[\s,，]+/).filter(Boolean)
+      if (kw.length) {
+        const cols = ['name', 'model', 'brand', 'package', 'part_no']
+        q = q.or(kw.map(k => cols.map(c => `${c}.ilike.%${k}%`).join(',')).join(','))
       }
     }
     if (params) {
@@ -234,9 +237,12 @@ export class SupabaseStore implements DataStore {
     if (categoryId) q = q.eq('category_id', categoryId)
     else if (categoryIds && categoryIds.length) q = q.in('category_id', categoryIds)
     if (search && search.trim()) {
-      const kw = search.trim().split(/\s+/)
-      for (const k of kw) {
-        q = q.or(`name.ilike.%${k}%,model.ilike.%${k}%,brand.ilike.%${k}%,package.ilike.%${k}%`)
+      // 多商品查询：空格 / 逗号分隔多个词，任一词命中即返回。
+      // 注意多个 .or() 会被 PostgREST AND 组合，必须拼成单条 or（内全为 OR）
+      const kw = search.trim().split(/[\s,，]+/).filter(Boolean)
+      if (kw.length) {
+        const cols = ['name', 'model', 'brand', 'package', 'part_no']
+        q = q.or(kw.map(k => cols.map(c => `${c}.ilike.%${k}%`).join(',')).join(','))
       }
     }
     if (params) {
@@ -584,6 +590,63 @@ export class SupabaseStore implements DataStore {
       supplier_id: input.supplier_id ?? null, note: input.note,
     })
     return await this.updateMaterial(input.material_id, { qty: next })
+  }
+
+  /**
+   * 批量出入库：库存基线按物料读库获取（不依赖前端缓存），同一物料多条流水
+   * 合并计算终值；一次批量 insert 写完全部流水，再按物料并发更新 qty。
+   * 任一物料库存不足 / 数量非法则整体抛错，不写任何数据。
+   */
+  async applyStockBatch(items: ApplyStockBatchItem[]): Promise<Map<string, number>> {
+    if (!items.length) return new Map()
+    const owner = await this.getOwnerId()
+    const ids = [...new Set(items.map(i => i.material_id))]
+    const { data: matsRaw, error: eMats } = await supabase
+      .from('materials')
+      .select('id, name, qty')
+      .is('deleted_at', null)
+      .in('id', ids)
+    if (eMats) throw eMats
+    const byId = new Map((matsRaw || []).map(m => [m.id, m]))
+    if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
+
+    // 累加校验：出库超出当前库存整体拦截（负库存兜底）
+    const finals = new Map<string, number>()
+    for (const it of items) {
+      if (!(it.qty > 0)) throw new Error('出入库数量必须大于 0')
+      const base = finals.get(it.material_id) ?? (Number(byId.get(it.material_id)?.qty) || 0)
+      const next = base + (it.type === 'in' ? it.qty : -it.qty)
+      if (next < 0) {
+        const name = byId.get(it.material_id)?.name ?? it.material_id
+        throw new Error(`「${name}」出库数量 ${it.qty} 超过当前库存 ${base}`)
+      }
+      finals.set(it.material_id, next)
+    }
+
+    // 批量请求写完全部流水（分块提交，控制单次载荷）
+    // 云端未执行撤销字段迁移时降级写入（与 addStockLog 一致）
+    const logs = items.map(it => ({
+      owner, material_id: it.material_id, type: it.type, qty: it.qty,
+      supplier_id: it.type === 'in' ? (it.supplier_id ?? null) : null,
+      note: it.note ?? null, status: 'normal',
+    }))
+    const CHUNK = 500
+    for (let i = 0; i < logs.length; i += CHUNK) {
+      const chunk = logs.slice(i, i + CHUNK)
+      let res = await supabase.from('stock_log').insert(chunk)
+      if (res.error && isMissingVoidColumn(res.error.message)) {
+        res = await supabase.from('stock_log').insert(chunk.map(({ status: _s, ...l }) => l))
+      }
+      if (res.error) throw res.error
+    }
+
+    // 按物料并发更新库存（去重后的物料，请求数远少于流水条数）
+    const updates = [...finals.entries()].map(async ([id, qty]) => {
+      const { error } = await supabase.from('materials').update({ qty }).eq('id', id)
+      if (error) throw error
+    })
+    await Promise.all(updates)
+    return finals
   }
 
   /** 单条撤销的内部实现：校验状态 → 回滚库存 → 置为已撤销 */
@@ -1133,7 +1196,7 @@ export class SupabaseStore implements DataStore {
   }
 
   async deleteLabelTemplate(id: string): Promise<void> {
-    // 内置模板不可删除（脚本种子写入，见 script/0001_init.sql 第 11 段）
+    // 内置模板不可删除（App 导入立创分类时种子写入，见 db.ts ensureDefaultLabelTemplate）
     const { data: cur, error: curErr } = await supabase
       .from('label_templates').select('builtin').eq('id', id).single()
     if (curErr) throw curErr
