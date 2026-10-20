@@ -212,7 +212,13 @@ export class SupabaseStore implements DataStore {
 
   async listMaterials(opts: ListMaterialsOpts = {}): Promise<MaterialRow[]> {
     const { search = '', categoryId = null, categoryIds, params, location } = opts
-    let q = supabase.from('materials').select('*, categories(name, parent(name))').is('deleted_at', null).order('created_at', { ascending: false })
+    // 参数筛选走 PostgREST 嵌入过滤（每个条件一个 !inner 别名嵌入，AND 语义）。
+    // 不能用 in.(子查询)：PostgREST 会把 SQL 当字面量解析（遇逗号分项）再 cast 成 uuid，直接报错。
+    const paramEntries = Object.entries(params || {}).filter(([, v]) => !!v)
+    const paramEmbeds = paramEntries.map((_, i) => `mp${i}:material_params!inner()`).join(',')
+    let q = supabase.from('materials')
+      .select(`*, categories(name, parent(name))${paramEmbeds ? ',' + paramEmbeds : ''}`)
+      .is('deleted_at', null).order('created_at', { ascending: false })
     if (categoryId) q = q.eq('category_id', categoryId)
     else if (categoryIds && categoryIds.length) q = q.in('category_id', categoryIds)
     if (location) q = q.eq('location', location)
@@ -225,13 +231,10 @@ export class SupabaseStore implements DataStore {
         q = q.or(kw.map(k => cols.map(c => `${c}.ilike.%${k}%`).join(',')).join(','))
       }
     }
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        if (!v) continue
-        const kk = k.replace(/'/g, "''")
-        const vv = String(v).replace(/'/g, "''")
-        q = q.filter('id', 'in', `(select material_id from material_params where param_key = '${kk}' and value = '${vv}')`)
-      }
+    if (paramEntries.length) {
+      paramEntries.forEach(([k, v], i) => {
+        q = q.eq(`mp${i}.param_key`, k).eq(`mp${i}.value`, String(v))
+      })
     }
     if (opts.limit != null) {
       if (opts.offset != null) q = q.range(opts.offset, opts.offset + opts.limit - 1)
@@ -239,14 +242,19 @@ export class SupabaseStore implements DataStore {
     }
     const { data, error } = await q
     if (error) throw error
-    const materials = ((data as MaterialRow[]) || []).map(flattenCategory)
+    const materials = ((data as unknown) as MaterialRow[] || []).map(flattenCategory)
     await this.fillMaterialParams(materials)
     return materials
   }
 
   async countMaterials(opts: ListMaterialsOpts = {}): Promise<number> {
     const { search = '', categoryId = null, categoryIds, params, location } = opts
-    let q = supabase.from('materials').select('*', { count: 'exact', head: true }).is('deleted_at', null)
+    // 参数筛选与 listMaterials 同：!inner 别名嵌入过滤（in 子查询 PostgREST 不支持）
+    const paramEntries = Object.entries(params || {}).filter(([, v]) => !!v)
+    const paramEmbeds = paramEntries.map((_, i) => `mp${i}:material_params!inner()`).join(',')
+    let q = supabase.from('materials')
+      .select(`*${paramEmbeds ? ',' + paramEmbeds : ''}`, { count: 'exact', head: true })
+      .is('deleted_at', null)
     if (categoryId) q = q.eq('category_id', categoryId)
     else if (categoryIds && categoryIds.length) q = q.in('category_id', categoryIds)
     if (search && search.trim()) {
@@ -258,13 +266,10 @@ export class SupabaseStore implements DataStore {
         q = q.or(kw.map(k => cols.map(c => `${c}.ilike.%${k}%`).join(',')).join(','))
       }
     }
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        if (!v) continue
-        const kk = k.replace(/'/g, "''")
-        const vv = String(v).replace(/'/g, "''")
-        q = q.filter('id', 'in', `(select material_id from material_params where param_key = '${kk}' and value = '${vv}')`)
-      }
+    if (paramEntries.length) {
+      paramEntries.forEach(([k, v], i) => {
+        q = q.eq(`mp${i}.param_key`, k).eq(`mp${i}.value`, String(v))
+      })
     }
     if (location) q = q.eq('location', location)
     const { count, error } = await q

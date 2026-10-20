@@ -1,29 +1,27 @@
 <template>
   <section class="mpage">
-    <!-- 吸顶：搜索 + 分类筛选（横向滚动 chips；负外边距吃掉 MobileShell .content 的 16px padding） -->
+    <!-- 吸顶：搜索 + 筛选（参考立创商城：搜索框 + 右侧筛选入口） -->
     <div class="topbar">
-      <div class="search">
-        <Search :size="16" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
-        <input v-model="search" type="search" placeholder="搜索名称 / 型号 / 编号…" />
+      <div class="search-row">
+        <div class="search">
+          <Search :size="14" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
+          <input v-model="search" type="search" placeholder="搜索名称 / 型号 / 编号…" />
+        </div>
+        <button class="icon-btn" title="切换视图" @click="toggleView">
+          <component :is="viewMode === 'list' ? Grid3x3 : List" :size="16" style="display: inline-flex; flex-shrink: 0" />
+        </button>
+        <button class="filter-btn" :class="{ on: filterCount > 0 }" @click="panelOpen = true">
+          <SlidersHorizontal :size="15" style="display: inline-flex; flex-shrink: 0" />
+          <span>筛选</span>
+          <i v-if="filterCount" class="f-badge">{{ filterCount }}</i>
+        </button>
       </div>
-      <div v-if="tree.length" class="chips">
-        <button class="chip" :class="{ on: !catId }" @click="catId = null">
-          全部<span class="ct">{{ totalCount }}</span>
+      <!-- 已选条件（横向 chips，可单个清除） -->
+      <div v-if="selectedTags.length" class="sel-tags">
+        <button v-for="t in selectedTags" :key="t.key" class="sel-tag" @click="removeTag(t.key)">
+          {{ t.label }}<X :size="11" style="display: inline-flex; flex-shrink: 0" />
         </button>
-        <button v-for="n in tree" :key="n.cat.id" class="chip" :class="{ on: catId === n.cat.id }"
-          @click="pickTop(n.cat.id)">
-          {{ n.cat.name }}<span class="ct">{{ countOf(n) }}</span>
-        </button>
-      </div>
-      <!-- 二级 chips：选中大类后出现（该大类无小类则不显示） -->
-      <div v-if="childRow.length" class="chips sub">
-        <button class="chip" :class="{ on: catId === activeTopId }" @click="catId = activeTopId">
-          全部<span class="ct">{{ activeTopCount }}</span>
-        </button>
-        <button v-for="c in childRow" :key="c.cat.id" class="chip" :class="{ on: catId === c.cat.id }"
-          @click="pickChild(c.cat.id)">
-          {{ c.cat.name }}<span class="ct">{{ countOf(c) }}</span>
-        </button>
+        <button class="sel-tag clear" @click="clearAll">清空</button>
       </div>
     </div>
 
@@ -45,22 +43,69 @@
       </div>
 
       <template v-else>
-        <div class="grid">
-          <!-- 电商橱窗卡片：大图 + 名称 + 品牌型号 + 价格/库存，零操作（操作在详情页） -->
-          <article v-for="it in items" :key="it.id" class="item" @click="openDetail(it)">
+        <!-- 双列卡片（字段与 PC 物料卡片对齐：名称+编号/品牌型号/参数/小类+封装tag/库存+库位+价格） -->
+        <div v-if="viewMode === 'grid'" class="grid">
+          <article v-for="it in items" :key="it.id" class="item grid-item" @click="openDetail(it)">
             <div class="thumb">
               <img v-if="imagePublicUrl(it.image_path)" :src="imagePublicUrl(it.image_path)" alt="" loading="lazy" />
               <div v-else class="thumb-ph">
-                <ImageIcon :size="26" style="display: inline-flex; flex-shrink: 0" />
+                <ImageIcon :size="24" style="display: inline-flex; flex-shrink: 0" />
               </div>
               <span v-if="isLow(it)" class="low-tag">低库存</span>
             </div>
             <div class="body">
-              <h3>{{ it.name }}</h3>
+              <h3>
+                <span class="name">{{ it.name }}</span>
+                <span class="part-no" v-if="it.part_no">{{ it.part_no }}</span>
+              </h3>
               <p class="meta">{{ it.brand || '—' }} · {{ it.model || '—' }}</p>
+              <p v-if="specLine(it)" class="specs">{{ specLine(it) }}</p>
+              <div class="tags">
+                <span class="tag" v-if="it.categories?.name">{{ it.categories.name }}</span>
+                <span class="tag" v-if="it.package">{{ it.package }}</span>
+              </div>
               <div class="row">
-                <span class="price">¥{{ formatPrice(it.price) }}</span>
                 <span class="qty" :class="{ low: isLow(it) }">×{{ it.qty }}</span>
+                <span class="row-r">
+                  <span v-if="it.location" class="loc">
+                    <MapPin :size="12" style="display: inline-flex; flex-shrink: 0" />{{ it.location }}
+                  </span>
+                  <span class="price">¥{{ formatPrice(it.price) }}</span>
+                </span>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- 单列行卡（同一套字段，行式布局） -->
+        <div v-else class="list">
+          <article v-for="it in items" :key="it.id" class="item row-item" @click="openDetail(it)">
+            <div class="row-thumb">
+              <img v-if="imagePublicUrl(it.image_path)" :src="imagePublicUrl(it.image_path)" alt="" loading="lazy" />
+              <div v-else class="thumb-ph">
+                <ImageIcon :size="22" style="display: inline-flex; flex-shrink: 0" />
+              </div>
+              <span v-if="isLow(it)" class="low-tag sm">低库存</span>
+            </div>
+            <div class="row-body">
+              <div class="row-head">
+                <h3 class="row-name">
+                  {{ it.name }}
+                  <span v-if="it.part_no" class="row-pn">{{ it.part_no }}</span>
+                </h3>
+                <span class="row-qty" :class="{ low: isLow(it) }">×{{ it.qty }}</span>
+              </div>
+              <p class="row-line2">{{ it.brand || '—' }} · {{ it.model || '—' }}</p>
+              <p v-if="specLine(it)" class="row-specs">{{ specLine(it) }}</p>
+              <div v-if="it.categories?.name || it.package" class="row-tags">
+                <span class="row-tag" v-if="it.categories?.name">{{ it.categories.name }}</span>
+                <span class="row-tag" v-if="it.package">{{ it.package }}</span>
+              </div>
+              <div class="row-foot">
+                <span v-if="it.location" class="loc">
+                  <MapPin :size="12" style="display: inline-flex; flex-shrink: 0" />{{ it.location }}
+                </span>
+                <span class="price">¥{{ formatPrice(it.price) }}</span>
               </div>
             </div>
           </article>
@@ -83,26 +128,34 @@
 
     <!-- 新增物料表单（复用桌面弹窗；编辑在详情页） -->
     <MaterialFormDialog v-model="showAdd" :categories="categories" :material="null" @saved="onSaved" />
+
+    <!-- 筛选面板（库位 → 大类 → 小类 → 扩展参数） -->
+    <MaterialFilterPanel :open="panelOpen" :tree="tree"
+      :cat-id="catId" :params="paramSel" :location="location"
+      @apply="onFilterApply" @close="panelOpen = false" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Plus, Box, Image as ImageIcon } from 'lucide-vue-next'
+import { Search, Plus, Box, Image as ImageIcon, X, SlidersHorizontal, Grid3x3, List, MapPin } from 'lucide-vue-next'
 import {
-  listMaterials, countMaterials, countMaterialsByCategory, listCategories,
-  imagePublicUrl, buildCategoryTree, descendantCategoryIds,
+  listMaterials, countMaterials, listCategories,
+  imagePublicUrl, buildCategoryTree, descendantCategoryIds, getCategoryParams,
 } from '../../lib/db'
-import type { Category, MaterialRow } from '../../lib/types'
+import { filterFieldParams } from '../../lib/paramFields'
+import type { Category, MaterialRow, CategoryParam } from '../../lib/types'
 import type { CategoryNode } from '../../lib/db'
 import type { ListMaterialsOpts } from '../../lib/storage'
 import { withAuthRetry } from '../../lib/authRetry'
 import MaterialFormDialog from '../../components/business/MaterialFormDialog.vue'
+import MaterialFilterPanel from '../../components/mobile/MaterialFilterPanel.vue'
 import { useToast } from '../../composables/toast'
 
 /**
- * 移动端物料库 Tab（电商橱窗式）：搜索 + 分类 chips + 双列大图卡片流。
+ * 移动端物料库 Tab（电商橱窗式）：搜索 + 立创式筛选面板 + 双列大图卡片流。
+ * 筛选层级：大类 → 小类 → 小类扩展参数（面板内逐级出现）。
  * 卡片零操作（电商原则），编辑 / 删除 / 出入库都在详情页 /m/material/:id。
  */
 const router = useRouter()
@@ -114,8 +167,14 @@ const tree = ref<CategoryNode[]>([])
 const search = ref('')
 /** 分类筛选：null = 全部；大类 = 含其下所有小类；小类 = 精确匹配（与桌面一致） */
 const catId = ref<string | null>(null)
-/** 各分类物料数（全库聚合，不随筛选变化），chips 徽标用 */
-const catCountMap = ref<Record<string, number>>({})
+/** 扩展参数筛选 { 参数 key: 值 }，仅选中小类时有意义 */
+const paramSel = ref<Record<string, string>>({})
+/** 库位筛选（精确匹配，来自库位字典） */
+const location = ref<string | null>(null)
+/** 当前小类参数模板（已选条件 tag 显示名称用） */
+const leafParams = ref<CategoryParam[]>([])
+
+const panelOpen = ref(false)
 
 const loading = ref(false)
 const error = ref('')
@@ -127,35 +186,13 @@ const loadingMore = ref(false)
 
 const showAdd = ref(false)
 
-const totalCount = computed(() => Object.values(catCountMap.value).reduce((s, n) => s + n, 0))
-
-/** 当前生效的大类节点（选中大类本身或其小类时） */
-const activeTop = computed<CategoryNode | null>(() => {
-  const id = catId.value
-  if (!id) return null
-  for (const n of tree.value) {
-    if (n.cat.id === id) return n
-    if (n.children.some(c => c.cat.id === id)) return n
-  }
-  return null
-})
-const activeTopId = computed(() => activeTop.value?.cat.id ?? '')
-const activeTopCount = computed(() => (activeTop.value ? countOf(activeTop.value) : 0))
-/** 二级 chips：选中大类（含小类）后展示其小类列表 */
-const childRow = computed(() => (activeTop.value?.children.length ? activeTop.value!.children : []))
-
-/** 分类计数：小类直取；大类聚合自身 + 子类 */
-function countOf(node: CategoryNode): number {
-  const own = catCountMap.value[node.cat.id] || 0
-  return node.children.reduce((s, c) => s + countOf(c), own)
-}
-
-function pickTop(id: string) {
-  catId.value = catId.value === id ? null : id
-}
-function pickChild(id: string) {
-  // 再点一次已选小类 → 回到该大类（即二级行的「全部」）
-  catId.value = catId.value === id ? activeTopId.value : id
+/** 视图模式：行卡（默认，信息密集） / 双列橱窗（浏览大图） */
+type ViewMode = 'grid' | 'list'
+const VIEW_KEY = 'llb.m.view.materials'
+const viewMode = ref<ViewMode>((localStorage.getItem(VIEW_KEY) as ViewMode) || 'list')
+function toggleView() {
+  viewMode.value = viewMode.value === 'list' ? 'grid' : 'list'
+  localStorage.setItem(VIEW_KEY, viewMode.value)
 }
 
 function isLow(it: MaterialRow) {
@@ -163,6 +200,11 @@ function isLow(it: MaterialRow) {
   return it.qty <= t
 }
 function formatPrice(v: number) { return Number(v || 0).toFixed(2) }
+
+/** 分类是否为大类（树顶层） */
+function isTopCategory(id: string) {
+  return tree.value.some(n => n.cat.id === id)
+}
 
 /** 当前分类筛选范围：大类 = 含其下所有小类；小类 / 无子级分类 = 精确匹配；未选 = 全部 */
 function categoryScope(): Pick<ListMaterialsOpts, 'categoryId' | 'categoryIds'> {
@@ -179,20 +221,73 @@ function categoryScope(): Pick<ListMaterialsOpts, 'categoryId' | 'categoryIds'> 
   return { categoryId: id }
 }
 
-const hasFilters = computed(() => !!search.value || !!catId.value)
+/** 组合查询参数：搜索 + 分类范围 + 参数 + 库位 */
+function buildOpts(): ListMaterialsOpts {
+  const opts: ListMaterialsOpts = { search: search.value, ...categoryScope() }
+  const p: Record<string, string> = {}
+  for (const [k, v] of Object.entries(paramSel.value)) if (v) p[k] = v
+  if (Object.keys(p).length) opts.params = p
+  if (location.value) opts.location = location.value
+  return opts
+}
+
+/** 已选分类名称（tag 文案） */
+function catName(id: string): string {
+  for (const n of tree.value) {
+    if (n.cat.id === id) return n.cat.name
+    const c = n.children.find(x => x.cat.id === id)
+    if (c) return c.cat.name
+  }
+  return '分类'
+}
+
+/** 参数行（与 PC Home 卡片同口径）：排除与品牌/型号/封装字段重复的参数值，前 3 个 join */
+function specLine(it: MaterialRow): string {
+  return filterFieldParams(it.params, { fieldValues: [it.model, it.brand, it.package] })
+    .map(([, v]) => v)
+    .slice(0, 3)
+    .join(' · ')
+}
+
+/** 已选条件 chips：库位 + 1 个分类 + 若干参数 */
+const selectedTags = computed(() => {
+  const tags: { key: string; label: string }[] = []
+  if (location.value) tags.push({ key: '__loc', label: '库位:' + location.value })
+  if (catId.value) tags.push({ key: '__cat', label: catName(catId.value) })
+  for (const p of leafParams.value) {
+    if (paramSel.value[p.key]) tags.push({ key: p.key, label: `${p.name}:${paramSel.value[p.key]}` })
+  }
+  return tags
+})
+
+/** 已选条件数（筛选按钮红点） */
+const filterCount = computed(() =>
+  (location.value ? 1 : 0) + (catId.value ? 1 : 0) + Object.values(paramSel.value).filter(Boolean).length)
+
+const hasFilters = computed(() => !!search.value || filterCount.value > 0)
 
 let debounce: ReturnType<typeof setTimeout> | undefined
 function scheduleLoad() {
   clearTimeout(debounce); debounce = setTimeout(load, 250)
 }
 watch(search, scheduleLoad)
-watch(catId, scheduleLoad)
+// 分类变化：拉参数模板（小类才有）并重置旧参数，再查询
+watch(catId, async (id) => {
+  paramSel.value = {}
+  leafParams.value = []
+  if (id && !isTopCategory(id)) {
+    try { leafParams.value = await getCategoryParams(id) } catch { /* 静默 */ }
+  }
+  scheduleLoad()
+})
+watch(paramSel, scheduleLoad, { deep: true })
+watch(location, scheduleLoad)
 
 async function load() {
   loading.value = true; error.value = ''
   offset.value = 0
   try {
-    const opts: ListMaterialsOpts = { search: search.value, ...categoryScope() }
+    const opts = buildOpts()
     const [page, count] = await withAuthRetry(() => Promise.all([
       listMaterials({ ...opts, limit: limit.value, offset: 0 }),
       countMaterials(opts),
@@ -211,7 +306,7 @@ async function loadMore() {
   try {
     offset.value += limit.value
     const page = await withAuthRetry(() =>
-      listMaterials({ search: search.value, ...categoryScope(), limit: limit.value, offset: offset.value }))
+      listMaterials({ ...buildOpts(), limit: limit.value, offset: offset.value }))
     items.value.push(...page)
     hasMore.value = items.value.length < total.value
   }
@@ -228,7 +323,6 @@ async function loadCategories() {
     categories.value = await listCategories()
     tree.value = buildCategoryTree(categories.value)
   } catch { /* 静默 */ }
-  try { catCountMap.value = await countMaterialsByCategory() } catch { /* 静默 */ }
 }
 
 function openAdd() { showAdd.value = true }
@@ -238,17 +332,32 @@ function openDetail(it: MaterialRow) {
   router.push(`/m/material/${it.id}`)
 }
 
-/** 新增保存后：刷新列表与计数 */
+/** 筛选面板确定：赋值即可，实际变化由下方 watch 触发查询（未变化则无需重查） */
+function onFilterApply(payload: { catId: string | null; params: Record<string, string>; location: string | null }) {
+  catId.value = payload.catId
+  paramSel.value = payload.params
+  location.value = payload.location
+}
+
+/** 移除单个已选条件 tag */
+function removeTag(key: string) {
+  if (key === '__cat') catId.value = null
+  else if (key === '__loc') location.value = null
+  else delete paramSel.value[key]
+}
+
+/** 清空全部筛选条件（保留搜索） */
+function clearAll() {
+  catId.value = null
+  paramSel.value = {}
+  location.value = null
+}
+
+/** 新增保存后：刷新列表 */
 async function onSaved() {
   showAdd.value = false
   await load()
-  void refreshCounts()
   toast.success('物料已添加')
-}
-
-/** 分类计数刷新 */
-async function refreshCounts() {
-  try { catCountMap.value = await countMaterialsByCategory() } catch { /* 静默 */ }
 }
 
 onMounted(() => {
@@ -272,27 +381,36 @@ onBeforeUnmount(() => {
   min-height: 100%;
 }
 
-/* ===== 吸顶工具区：搜索 + 分类 chips =====
-   负外边距吃掉 MobileShell .content 的 16px padding，使吸顶时贴住滚动区顶缘 */
+/* ===== 吸顶工具区：搜索 + 筛选 =====
+   水平负外边距吃掉 .content 的 16px 侧 padding 实现全宽吸顶；
+   顶部 padding 本就是 0，不能再用负 margin（会把 topbar 拽出可视区） */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 10;
-  margin: -16px -16px 0;
+  margin: 0 -16px;
   padding: 12px 16px 10px;
   background: var(--c-bg);
   border-bottom: 1px solid var(--c-border-hairline);
 }
 
+.search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .search {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
-  padding: 0 12px;
-  height: var(--ctrl-h-lg);
+  padding: 0 10px;
+  height: 34px;
 }
 
 .search:focus-within {
@@ -305,7 +423,7 @@ onBeforeUnmount(() => {
   flex: 1;
   height: 100%;
   padding: 0;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-sm);
 }
 
 .search input:focus {
@@ -315,10 +433,73 @@ onBeforeUnmount(() => {
 
 .s-ico {
   color: var(--c-text-3);
+  flex-shrink: 0;
 }
 
-/* 分类 chips：横向滚动，不换行 */
-.chips {
+/* 筛选按钮 */
+.filter-btn {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.filter-btn.on {
+  border-color: transparent;
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
+}
+
+/* 纯图标小按钮（视图切换） */
+.icon-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.icon-btn:active {
+  background: var(--c-surface-hover);
+}
+
+.f-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--c-danger);
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* 已选条件 chips */
+.sel-tags {
   display: flex;
   gap: 6px;
   margin-top: 8px;
@@ -326,54 +507,37 @@ onBeforeUnmount(() => {
   scrollbar-width: none;
 }
 
-.chips::-webkit-scrollbar {
+.sel-tags::-webkit-scrollbar {
   display: none;
 }
 
-.chips.sub {
-  margin-top: 6px;
-}
-
-.chip {
+.sel-tag {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--c-border);
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: none;
   border-radius: var(--r-pill);
-  background: var(--c-surface);
-  color: var(--c-text-2);
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
   font-family: inherit;
-  font-size: var(--fs-sm);
-  font-weight: 500;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.chip.on {
-  background: var(--c-primary-soft);
-  border-color: transparent;
-  color: var(--c-primary);
-  font-weight: 600;
-}
-
-.chip .ct {
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--c-text-3);
-}
-
-.chip.on .ct {
-  color: var(--c-primary);
-  opacity: 0.75;
+.sel-tag.clear {
+  background: var(--c-bg-2);
+  color: var(--c-text-2);
 }
 
 /* ===== 列表区 ===== */
 .list-wrap {
-  margin-top: 12px;
+  margin-top: 6px;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -459,6 +623,135 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+/* ===== 单列行卡列表（信息密集型） ===== */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.row-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--c-border-hairline);
+  background: transparent;
+}
+
+.row-item:last-child {
+  border-bottom: none;
+}
+
+.row-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 88px;
+  height: 88px;
+  border-radius: var(--r-md);
+  background: var(--c-glass);
+  overflow: hidden;
+}
+
+.row-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.low-tag.sm {
+  top: 4px;
+  left: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.row-name {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* 编号跟随名称（与 PC 卡片一致） */
+.row-name .row-pn {
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
+.row-qty {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-qty.low {
+  color: var(--c-danger);
+}
+
+.row-line2,
+.row-specs {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 小类 + 封装 tag（与双列卡片同一套） */
+.row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.row-tag {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--c-bg-2);
+  color: var(--c-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.row-foot {
+  margin-top: auto;
+  padding-top: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .load-more,
 .load-end {
   display: flex;
@@ -483,16 +776,9 @@ onBeforeUnmount(() => {
   height: 1px;
 }
 
-/* ===== 电商橱窗卡片：大图 + 少文字 + 价格重心，零操作 ===== */
+/* ===== 卡片公共 ===== */
 .item {
-  position: relative;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
-  overflow: hidden;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
   transition: transform 120ms ease-out;
   -webkit-tap-highlight-color: transparent;
 }
@@ -502,10 +788,21 @@ onBeforeUnmount(() => {
   transform: scale(0.98);
 }
 
-/* 1:1 方图（电商橱窗比例） */
+/* ===== 电商橱窗双列卡片 ===== */
+.grid-item {
+  position: relative;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 4:3 图（比 1:1 矮，给信息区让空间） */
 .thumb {
   position: relative;
-  aspect-ratio: 1;
+  aspect-ratio: 4 / 3;
   background: var(--c-glass);
   overflow: hidden;
   flex-shrink: 0;
@@ -542,7 +839,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* 卡片内容 */
+/* 双列卡片内容 */
 .body {
   padding: 8px 10px 10px;
   flex: 1;
@@ -551,18 +848,24 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* 名称：最多两行（电商标题式） */
+/* 名称 + 编号同行（与 PC 卡片一致：名称主显，编号小号灰字跟随） */
 .body h3 {
   margin: 0;
   font-size: var(--fs-md);
   font-weight: 600;
   line-height: 1.35;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: 2.7em;
   word-break: break-all;
+}
+
+.body h3 .part-no {
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-text-3);
 }
 
 .meta {
@@ -574,13 +877,73 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.row {
+/* 参数行（与 PC 卡片一致） */
+.specs {
+  margin: 3px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 小类 + 封装 tag（与 PC 卡片一致的胶囊 tag） */
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.tag {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--c-bg-2);
+  color: var(--c-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.body .row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   margin-top: auto;
   padding-top: 6px;
   gap: 6px;
+}
+
+.body .row .qty {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.body .row .qty.low {
+  color: var(--c-danger);
+}
+
+.row-r {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 库位（与 PC 卡片一致：图标 + 文本，紧贴价格左侧） */
+.loc {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* 价格：视觉重心（电商式大号价格） */

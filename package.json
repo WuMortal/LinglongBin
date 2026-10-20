@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "tauri:android-debug": "npx tauri android build --apk --debug",
     "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {

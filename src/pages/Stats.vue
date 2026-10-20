@@ -719,10 +719,4 @@ async function genPoFromLow() {
     grid-template-columns: 1fr;
   }
 }
-
-@media (max-width: 520px) {
-  .kpis {
-    grid-template-columns: 1fr;
-  }
-}
 </style>
