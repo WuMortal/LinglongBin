@@ -82,8 +82,12 @@ export const mobileRoutes: RouteRecordRaw[] = [
   { path: '/m/stock/list', name: 'm-stock-list', component: () => import('./pages/mobile/sub/StockListPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/logs', name: 'm-stock-logs', component: () => import('./pages/mobile/sub/StockLogsPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/purchase', name: 'm-stock-purchase', component: () => import('./pages/mobile/sub/StockPurchasePage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/purchase/new', name: 'm-stock-purchase-new', component: () => import('./pages/mobile/sub/StockPurchaseDetailPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/purchase/:id', name: 'm-stock-purchase-detail', component: () => import('./pages/mobile/sub/StockPurchaseDetailPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/import', name: 'm-stock-import', component: () => import('./pages/mobile/sub/StockImportPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/batch', name: 'm-stock-batch', component: () => import('./pages/mobile/sub/StockBatchPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/take', name: 'm-stock-take', component: () => import('./pages/mobile/sub/StockTakePage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/take/new', name: 'm-stock-take-new', component: () => import('./pages/mobile/sub/StockTakeNewPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/bom', name: 'm-bom', component: () => import('./pages/mobile/sub/BomPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
 ]
 

@@ -4,7 +4,8 @@
     <div class="filters">
       <div class="f-search">
         <Search :size="15" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
-        <input v-model="search" placeholder="搜索名称 / 型号 / 品牌" />
+        <!-- 服务端检索字段：name / model / brand / package / part_no，多词用空格或逗号分隔 -->
+        <input v-model="search" placeholder="搜索名称 / 型号 / 商品编号" />
       </div>
       <div class="filters-right">
         <AppSelect v-model="location" :options="locationOptions" :width="100" searchable search-placeholder="搜索库位"

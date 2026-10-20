@@ -47,7 +47,7 @@
           </span>
           <span class="e-name">导入入库</span>
         </button>
-        <button class="entry" @click="batchOpen = true">
+        <button class="entry" @click="go('/m/stock/batch')">
           <span class="e-ico teal">
             <ArrowLeftRight :size="17" style="display: inline-flex; flex-shrink: 0" />
           </span>
@@ -116,8 +116,6 @@
       </ul>
     </section>
 
-    <!-- 批量出入库弹窗（复用桌面组件：分类树选物料 → 逐个填数量 → 一张单提交） -->
-    <BatchStockModal :open="batchOpen" @close="batchOpen = false" @done="onBatchDone" />
   </PullRefresh>
 </template>
 
@@ -130,7 +128,6 @@ import {
 } from 'lucide-vue-next'
 import KpiCards from '../../components/KpiCards.vue'
 import PullRefresh from '../../components/mobile/PullRefresh.vue'
-import BatchStockModal from '../../components/business/BatchStockModal.vue'
 import { useStockData } from '../../composables/useStockData'
 import { lowStockMaterials, pageStockOrders } from '../../lib/db'
 import type { StockOrder } from '../../lib/types'
@@ -144,7 +141,6 @@ import type { LowStockRow } from '../../lib/storage/types'
 const router = useRouter()
 const { loading, kpiItems, load } = useStockData()
 
-const batchOpen = ref(false)
 /** 低库存预警 Top 5 */
 const alerts = ref<LowStockRow[]>([])
 /** 最近 3 笔出入库单 */
@@ -179,12 +175,6 @@ function fmtTime(iso: string) {
 async function onRefresh(done: () => void) {
   await Promise.all([load(), loadAlerts(), loadRecent()])
   done()
-}
-
-/** 批量出入库成功：关闭弹窗并刷新 KPI 与最近单据（单例共享数据） */
-async function onBatchDone() {
-  batchOpen.value = false
-  await Promise.all([load(), loadRecent()])
 }
 
 onMounted(() => {
