@@ -22,7 +22,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getPlatform } from './lib/platform'
+import { getPlatformSync } from './lib/platform'
 import { setAuthState, onAuthChange } from './lib/auth'
 import DesktopShell from './shells/DesktopShell.vue'
 import MobileShell from './shells/MobileShell.vue'
@@ -32,11 +32,11 @@ import Toast from './components/Toast.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 
 const route = useRoute()
-const isDesktop = ref(true)
+// 同步探测：首帧即选中正确 Shell，避免移动端先闪桌面壳
+const isDesktop = ref(getPlatformSync().kind === 'desktop')
+// const isDesktop = ref(false)
 
-onMounted(async () => {
-  const p = await getPlatform()
-  isDesktop.value = p.kind === 'desktop'
+onMounted(() => {
   // 登录态由路由守卫统一门控，这里仅同步模块级状态以便守卫读取
   onAuthChange((_e: unknown, session: unknown) => setAuthState(!!session))
 })

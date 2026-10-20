@@ -471,10 +471,10 @@ function dbToBool(v: unknown): boolean {
   return v === 1 || v === true || v === '1' || v === 'true'
 }
 
-// ===== 文件存储（resource 目录 images/<yyyyMMdd>/） =====
+// ===== 文件存储（app config 目录 images/<yyyyMMdd>/） =====
 
-/** resource 目录绝对路径（ensure() 时加载并缓存） */
-let resourceDir: string | null = null
+/** 文件存储目录绝对路径（ensure() 时加载并缓存）；历史版本存 resource 目录，启动时一次性迁移 */
+let filesDir: string | null = null
 
 /** 本地日期 yyyyMMdd，用作图片存放子目录 */
 function yyyyMMdd(d = new Date()): string {
@@ -801,8 +801,10 @@ export class SqliteStore implements DataStore {
         try { await migrateLegacyStockOrders(db) } catch { /* 迁移失败不阻塞启动，下次重试 */ }
         // 内置标签模板：清库 / 新装时自动写入（种子只在 App 层，SQL 初始化脚本不含）
         try { await seedBuiltinLabelTemplate(db) } catch { /* 种子失败不阻塞启动 */ }
-        // 缓存 resource 目录（图片相对路径 → asset URL 用）；去掉 Windows canonicalize 的 \\?\ 前缀
-        resourceDir = (await invoke<string>('get_resource_dir')).replace(/^\\\\\?\\/, '').replace(/\\/g, '/')
+        // 一次性迁移：桌面旧版把图片/手册存 resource 目录，统一搬到 app config 目录（幂等；Android 无历史文件自动跳过）
+        try { await invoke('migrate_legacy_files') } catch { /* 迁移失败不阻塞启动，下次重试 */ }
+        // 缓存文件存储目录（app config dir，与 data.db 同目录）：图片相对路径 → asset URL 用；去掉 Windows canonicalize 的 \\?\ 前缀
+        filesDir = (await invoke<string>('get_files_dir')).replace(/^\\\\\?\\/, '').replace(/\\/g, '/')
         this.db = db
       })().catch(e => { this.initPromise = null; throw e })
     }
@@ -1312,7 +1314,7 @@ export class SqliteStore implements DataStore {
     await db.execute('delete from dict_items where id = ?', [id])
   }
 
-  // ===== 文件（离线模式：落盘到 resource 目录 images|files/<yyyyMMdd>/，DB 存相对路径） =====
+  // ===== 文件（离线模式：落盘到 app config 目录 images|files/<yyyyMMdd>/，DB 存相对路径） =====
   async uploadImage(file: File, _userId: string): Promise<UploadResult> {
     await this.ensure()
     const ext = (file.name.split('.').pop() || 'png')
@@ -1323,7 +1325,7 @@ export class SqliteStore implements DataStore {
     return { path: rel, url: this.imagePublicUrl(rel) || rel }
   }
 
-  // 手册等文档：存 resource 目录 files/<yyyyMMdd>/
+  // 手册等文档：存 app config 目录 files/<yyyyMMdd>/
   async uploadFile(file: File, _userId: string): Promise<UploadResult> {
     await this.ensure()
     const ext = (file.name.split('.').pop() || 'bin')
@@ -1338,16 +1340,16 @@ export class SqliteStore implements DataStore {
     if (!path) return undefined
     // 兼容旧数据（base64 data URL）与外链 http(s)
     if (/^(data:|https?:)/i.test(path)) return path
-    // 新格式：相对 resource 目录的路径 → asset 协议 URL
-    if (!resourceDir) return undefined
-    return convertFileSrc(`${resourceDir}/${path.replace(/\\/g, '/')}`)
+    // 新格式：相对 app config 目录的路径 → asset 协议 URL
+    if (!filesDir) return undefined
+    return convertFileSrc(`${filesDir}/${path.replace(/\\/g, '/')}`)
   }
 
   /** 本地文件绝对路径（手册等用系统默认程序打开）；http/data 外链返回 null */
   localFilePath(path: string): string | null {
     if (!path || /^(data:|https?:)/i.test(path)) return null
-    if (!resourceDir) return null
-    return `${resourceDir}/${path.replace(/\\/g, '/')}`
+    if (!filesDir) return null
+    return `${filesDir}/${path.replace(/\\/g, '/')}`
   }
 
   // ===== 出入库 =====

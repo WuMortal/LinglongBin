@@ -8,7 +8,8 @@
       </div>
       <div class="about-actions">
         <span class="about-version">v{{ currentVersion || '0.1.0' }}</span>
-        <button class="btn-check-update"
+        <!-- 检查更新仅桌面端提供：移动端未注册 updater 插件 -->
+        <button v-if="!isMobile" class="btn-check-update"
           :disabled="status === 'checking' || status === 'downloading' || status === 'installing'" @click="handleCheck">
           <RefreshCw v-if="status === 'checking'" class="icon-spin" :size="12" />
           <RefreshCw v-else :size="12" />
@@ -91,8 +92,11 @@ import logoUrl from '../../src-tauri/icons/logo.svg'
 import { useUpdaterStore } from '@/stores/updater'
 import { openExternal } from '@/lib/db'
 import { resolveRepoUrl, assertRepoUrl } from '@/lib/strKit'
+import { getPlatformSync } from '@/lib/platform'
 
 defineProps<{ embedded?: boolean }>()
+
+const isMobile = getPlatformSync().kind === 'mobile'
 
 const features = [
   { icon: Boxes, title: '物料管理', desc: '统一管理电阻、电容、芯片等元器件，支持分类、参数与图片' },

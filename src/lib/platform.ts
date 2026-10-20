@@ -10,7 +10,8 @@ export interface PlatformInfo {
 
 let cached: PlatformInfo | null = null
 
-export async function getPlatform(): Promise<PlatformInfo> {
+/** 同步探测（UA / 注入标志 / 视口均为同步可得）。App 首帧渲染前使用，避免移动端闪桌面壳。 */
+export function getPlatformSync(): PlatformInfo {
   if (cached) return cached
   const ua = navigator.userAgent || ''
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -22,4 +23,8 @@ export async function getPlatform(): Promise<PlatformInfo> {
 
   cached = { kind, os: isTauri ? (mobileUA ? 'android/ios' : 'desktop') : 'web', isTauri }
   return cached
+}
+
+export async function getPlatform(): Promise<PlatformInfo> {
+  return getPlatformSync()
 }

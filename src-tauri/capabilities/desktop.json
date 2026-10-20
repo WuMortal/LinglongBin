@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-only",
+  "description": "仅桌面端的权限：自动更新插件不支持移动端（updater crate 已在 Cargo.toml 按平台门控）",
+  "windows": ["main"],
+  "platforms": ["windows", "linux", "macOS"],
+  "permissions": [
+    "updater:default"
+  ]
+}

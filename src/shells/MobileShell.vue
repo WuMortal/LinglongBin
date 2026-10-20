@@ -22,8 +22,8 @@
 import type { Component } from 'vue'
 import { ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { LayoutGrid, List, BarChart3, ScanLine, Settings, Folder, Box } from 'lucide-vue-next'
-import { routes } from '../router'
+import { LayoutGrid, List, BarChart3, ScanLine, Settings, Folder, Box, Wrench } from 'lucide-vue-next'
+import { mobileRoutes } from '../router'
 import SettingsModal from '../pages/Settings.vue'
 
 const settingsOpen = ref(false)
@@ -36,13 +36,15 @@ const iconMap: Record<string, Component> = {
   gear: Settings,
   folder: Folder,
   box: Box,
+  wrench: Wrench,
 }
 function iconOf(name?: string): Component {
   return (name && iconMap[name]) || LayoutGrid
 }
 
 const route = useRoute()
-const nav = routes.filter(r => !!r.meta?.title && !r.meta?.hidden)
+// tabbar 仅展示 /m 移动路由组的一级页（桌面 hidden 路由不在该组内，无需再过滤）
+const nav = mobileRoutes.filter(r => !!r.meta?.title)
 // 隐藏子页面通过 meta.activeMenu 归并到所属菜单高亮（与桌面侧栏一致）
 function menuActive(path: string): boolean {
   return route.path === path || route.meta?.activeMenu === path
@@ -57,8 +59,8 @@ function menuActive(path: string): boolean {
 }
 .tabbar {
   position: fixed; left: 12px; right: 12px; bottom: 12px;
-  height: 56px;
-  padding-bottom: env(safe-area-inset-bottom);
+  min-height: 56px;
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
   background: var(--c-glass-strong);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -83,7 +85,6 @@ function menuActive(path: string): boolean {
 .tab.router-link-active { color: var(--c-primary); }
 .tab.router-link-active .tab-ico {
   background: var(--c-surface-active);
-  transform: translateY(-2px);
 }
 .tab :deep(.icon) { color: inherit; }
 </style>
