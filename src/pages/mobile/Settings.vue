@@ -19,12 +19,7 @@
 
     <!-- 子面板：吸顶返回栏 + 复用桌面 pane（embedded） -->
     <template v-else>
-      <header class="nav">
-        <button class="back" title="返回" @click="active = null">
-          <ArrowLeft :size="20" style="display: inline-flex; flex-shrink: 0" />
-        </button>
-        <h1>{{ activeLabel }}</h1>
-      </header>
+      <NavBar :title="activeLabel" @back="active = null" />
       <div class="pane-wrap">
         <component :is="paneMap[active]" embedded />
       </div>
@@ -34,7 +29,8 @@
 
 <script setup lang="ts">
 import { ref, computed, type Component } from 'vue'
-import { ArrowLeft, ChevronRight, Settings, Database, Folder, Truck, Info, BookText } from 'lucide-vue-next'
+import { ChevronRight, Settings, Database, Folder, Truck, Info, BookText } from 'lucide-vue-next'
+import NavBar from '../../components/mobile/NavBar.vue'
 import Categories from '../Categories.vue'
 import Suppliers from '../Suppliers.vue'
 import BasicData from '../BasicData.vue'
@@ -165,44 +161,6 @@ const activeLabel = computed(() => tabs.find(t => t.key === active.value)?.label
 }
 
 /* ===== 子面板 ===== */
-.nav {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 48px;
-  margin: -16px -16px 0;
-  padding: 0 10px 0 8px;
-  background: var(--c-bg);
-  border-bottom: 1px solid var(--c-border-hairline);
-}
-
-.back {
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--c-text);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.back:active {
-  background: var(--c-surface-hover);
-}
-
-.nav h1 {
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: 600;
-}
-
 .pane-wrap {
   margin-top: 14px;
 }

@@ -104,11 +104,14 @@
             </div>
           </template>
           <template v-else>
-            <DataTable v-if="low.length" :columns="lowCols" :rows="low" row-key="id" :clickable="false">
-              <template #cell-model="{ row }"><span class="mono">{{ row.model || '—' }}</span></template>
-              <template #cell-qty="{ row }"><span class="bad">{{ row.qty }}</span></template>
-              <template #cell-lack="{ row }"><span class="gap">缺 {{ Math.max(0, row.threshold - row.qty) }}</span></template>
-            </DataTable>
+            <div v-if="low.length" class="table-scroll">
+              <DataTable :columns="lowCols" :rows="low" row-key="id" :clickable="false">
+                <template #cell-model="{ row }"><span class="mono">{{ row.model || '—' }}</span></template>
+                <template #cell-qty="{ row }"><span class="bad">{{ row.qty }}</span></template>
+                <template #cell-lack="{ row }"><span class="gap">缺 {{ Math.max(0, row.threshold - row.qty)
+                    }}</span></template>
+              </DataTable>
+            </div>
             <div v-else class="ok-state">
               <div class="ok-ico">
                 <Check :size="28" style="display: inline-flex; flex-shrink: 0" />
@@ -130,11 +133,14 @@
             </div>
           </template>
           <template v-else>
-            <DataTable v-if="stagnantTop.length" :columns="stagnantCols" :rows="stagnantTop" row-key="id" :clickable="false">
-              <template #cell-model="{ row }"><span class="mono">{{ row.model || '—' }}</span></template>
-              <template #cell-days="{ row }"><span class="gap">{{ row.days }} 天</span></template>
-              <template #cell-last_move="{ row }"><span class="mono">{{ row.last_move ? row.last_move.slice(0, 10) : '无记录' }}</span></template>
-            </DataTable>
+            <div v-if="stagnantTop.length" class="table-scroll">
+              <DataTable :columns="stagnantCols" :rows="stagnantTop" row-key="id" :clickable="false">
+                <template #cell-model="{ row }"><span class="mono">{{ row.model || '—' }}</span></template>
+                <template #cell-days="{ row }"><span class="gap">{{ row.days }} 天</span></template>
+                <template #cell-last_move="{ row }"><span class="mono">{{ row.last_move ? row.last_move.slice(0, 10) :
+                    '无记录' }}</span></template>
+              </DataTable>
+            </div>
             <div v-else class="ok-state">
               <div class="ok-ico">
                 <Check :size="28" style="display: inline-flex; flex-shrink: 0" />
@@ -528,7 +534,13 @@ async function genPoFromLow() {
   min-width: 0;
 }
 
-.chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; min-height: 32px; }
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  min-height: 32px;
+}
 
 .chart-head h3 {
   margin: 0;
@@ -545,8 +557,17 @@ async function genPoFromLow() {
   border: 1px solid var(--c-border);
 }
 
-.pie-crumb { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.pie-crumb .btn.mini { height: 24px; padding: 0 8px; }
+.pie-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pie-crumb .btn.mini {
+  height: 24px;
+  padding: 0 8px;
+}
 
 .pie-crumb-sep {
   color: var(--c-text-3);
@@ -598,6 +619,15 @@ async function genPoFromLow() {
 
 .low-card {
   padding: 20px;
+}
+
+/* 预警/呆滞料表格区：固定最大高度，超出后表体内滚动（表头 sticky） */
+.table-scroll {
+  --list-max-h: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: var(--list-max-h);
 }
 
 .card-head {
@@ -717,6 +747,21 @@ async function genPoFromLow() {
 
   .charts {
     grid-template-columns: 1fr;
+  }
+
+  /* 移动端：隐藏页头，全页滚动（滚动由 MobileShell .content 负责） */
+  .head {
+    display: none;
+  }
+
+  .page {
+    height: auto;
+    overflow: visible;
+    gap: 10px;
+  }
+
+  .page>.scroll-area {
+    overflow: visible;
   }
 }
 </style>

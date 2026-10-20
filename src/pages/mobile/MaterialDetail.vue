@@ -1,45 +1,38 @@
 <template>
   <section class="mpage" v-if="m">
-    <!-- 返回栏：吸顶 -->
-    <header class="nav">
-      <button class="back" title="返回" @click="goBack">
-        <ArrowLeft :size="20" style="display: inline-flex; flex-shrink: 0" />
-      </button>
-      <h1>{{ m.name }}</h1>
-    </header>
+    <!-- 返回栏：通用吸顶组件 -->
+    <NavBar :title="m.name" />
 
     <div class="detail">
-      <!-- 大图 -->
-      <div class="hero" @click="openViewer">
-        <img v-if="previewUrl" :src="previewUrl" alt="" />
-        <div v-else class="hero-ph">
-          <ImageIcon :size="44" style="display: inline-flex; flex-shrink: 0" />
-        </div>
-        <span v-if="isLow" class="low-tag">低库存</span>
-      </div>
-
-      <!-- 价格 / 库存区（电商商详式视觉重心） -->
-      <div class="price-card">
-        <div class="price-main">
-          <span class="cur">¥</span><span class="num">{{ fmtPrice(m.price) }}</span>
-          <span class="unit">/ 件</span>
-        </div>
-        <div class="price-side">
-          <span class="stk" :class="{ low: isLow }">库存 ×{{ m.qty }}</span>
-          <span class="val">总值 ¥{{ fmtPrice(m.qty * m.price) }}</span>
-        </div>
-      </div>
-
-      <!-- 标题区 -->
+      <!-- 头部卡片：缩略图 + 名称/标签 + 价格库存 -->
       <div class="title-card">
-        <h2>{{ m.name }}</h2>
-        <p class="sub">{{ m.brand || '—' }} · {{ m.model || '—' }}</p>
-        <div class="t-tags">
-          <span class="ttag" v-if="catLine">{{ catLine }}</span>
-          <span class="ttag" v-if="m.package">{{ m.package }}</span>
-          <span class="ttag loc" v-if="m.location">
-            <MapPin :size="11" style="display: inline-flex; flex-shrink: 0" />{{ m.location }}
-          </span>
+        <div class="hd">
+          <div class="thumb" @click="openViewer">
+            <img v-if="previewUrl" :src="previewUrl" alt="" />
+            <ImageIcon v-else :size="26" style="display: inline-flex; flex-shrink: 0" />
+            <span v-if="isLow" class="low-tag">低库存</span>
+          </div>
+          <div class="hd-main">
+            <h2>{{ m.name }}</h2>
+            <p class="sub">{{ m.brand || '—' }} · {{ m.model || '—' }}</p>
+            <div class="t-tags">
+              <span class="ttag" v-if="catLine">{{ catLine }}</span>
+              <span class="ttag" v-if="m.package">{{ m.package }}</span>
+              <span class="ttag loc" v-if="m.location">
+                <MapPin :size="11" style="display: inline-flex; flex-shrink: 0" />{{ m.location }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="price-row">
+          <div class="price-main">
+            <span class="cur">¥</span><span class="num">{{ fmtPrice(m.price) }}</span>
+            <span class="unit">/ 件</span>
+          </div>
+          <div class="price-side">
+            <span class="stk" :class="{ low: isLow }">库存 ×{{ m.qty }}</span>
+            <span class="val">总值 ¥{{ fmtPrice(m.qty * m.price) }}</span>
+          </div>
         </div>
       </div>
 
@@ -154,7 +147,7 @@
 import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Image as ImageIcon, MapPin, ArrowUpRight, FileText, Pencil, Trash2,
+  Image as ImageIcon, MapPin, ArrowUpRight, FileText, Pencil, Trash2,
   ArrowDownToLine, ArrowUpFromLine,
 } from 'lucide-vue-next'
 import {
@@ -164,6 +157,7 @@ import {
 import type { Category, MaterialRow, CategoryParam, StockLog, MaterialFile } from '../../lib/types'
 import { filterFieldParams } from '../../lib/paramFields'
 import MaterialFormDialog from '../../components/business/MaterialFormDialog.vue'
+import NavBar from '../../components/mobile/NavBar.vue'
 import QuickStockSheet from '../../components/mobile/QuickStockSheet.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
 import { useToast } from '../../composables/toast'
@@ -261,12 +255,6 @@ async function openDs(path: string) {
 function openViewer() { if (previewUrl.value) showViewer.value = true }
 function openEdit() { showEdit.value = true }
 
-/** 返回：有历史回上一页，否则回物料库 */
-function goBack() {
-  if (window.history.length > 1) router.back()
-  else router.replace('/m/home')
-}
-
 async function load() {
   const id = route.params.id as string
   if (!id) return
@@ -335,7 +323,7 @@ async function remove() {
   try {
     await deleteMaterial(v.id)
     toast.success('删除成功')
-    goBack()
+    router.replace('/m/materials')
   }
   catch (e: unknown) { toast.error('删除失败：' + ((e as Error).message || e)) }
 }
@@ -350,119 +338,73 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
   min-height: 100%;
 }
 
-/* ===== 返回栏（吸顶） ===== */
-.nav {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 48px;
-  margin: -16px -16px 0;
-  padding: 0 10px 0 8px;
-  background: var(--c-bg);
-  border-bottom: 1px solid var(--c-border-hairline);
-}
-
-.back {
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--c-text);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.back:active {
-  background: var(--c-surface-hover);
-}
-
-.nav h1 {
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
+/* ===== 详情内容 ===== */
 .detail {
   /* 给底部操作栏留空间 */
   padding-bottom: calc(84px + env(safe-area-inset-bottom));
 }
 
-/* ===== 大图区 ===== */
-.hero {
+/* ===== 头部缩略图 ===== */
+.thumb {
   position: relative;
-  margin-top: 12px;
-  aspect-ratio: 1;
-  max-height: 420px;
-  background: var(--c-glass);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-xl);
+  width: 92px;
+  height: 92px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
+  padding: 6px;
+  background: var(--c-glass);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
   overflow: hidden;
+  color: var(--c-text-3);
   cursor: zoom-in;
 }
 
-.hero img {
+.thumb img {
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
-.hero-ph {
-  color: var(--c-text-3);
-}
-
 .low-tag {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  padding: 3px 10px;
+  top: 4px;
+  left: 4px;
+  padding: 1px 6px;
   border-radius: 999px;
   background: var(--c-danger);
   color: #fff;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   font-weight: 600;
 }
 
-/* ===== 价格 / 库存区 ===== */
-.price-card {
+/* ===== 价格 / 库存区：单行紧凑，库存与总值不另起一列 ===== */
+.price-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-top: 14px;
-  padding: 12px 14px;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-xl);
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .price-main {
   display: inline-flex;
   align-items: baseline;
   color: var(--c-danger);
+  min-width: 0;
 }
 
 .price-main .cur {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: 700;
 }
 
 .price-main .num {
-  font-size: 26px;
-  font-weight: 800;
+  font-size: 18px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 .price-main .unit {
@@ -473,13 +415,13 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
 
 .price-side {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .stk {
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--c-accent);
   font-variant-numeric: tabular-nums;
@@ -494,24 +436,41 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
   color: var(--c-text-3);
 }
 
-/* ===== 标题区 ===== */
+/* ===== 标题区（缩略图 + 名称，与价格同一张卡） ===== */
 .title-card {
-  margin-top: 10px;
-  padding: 12px 14px;
+  margin-top: 12px;
+  padding: 10px 12px;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-xl);
 }
 
+.hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.hd-main {
+  flex: 1;
+  min-width: 0;
+}
+
 .title-card h2 {
   margin: 0;
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.35;
+  /* 名称最多两行，避免长名称把卡片顶高 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .sub {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
@@ -519,8 +478,8 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
 .t-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 5px;
+  margin-top: 6px;
 }
 
 .ttag {
@@ -541,15 +500,15 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
 
 /* ===== 通用信息区 ===== */
 .sec {
-  margin-top: 12px;
-  padding: 12px 14px;
+  margin-top: 10px;
+  padding: 10px 12px;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-xl);
 }
 
 .sec h3 {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   font-size: var(--fs-md);
   font-weight: 700;
 }
