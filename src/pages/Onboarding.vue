@@ -77,12 +77,22 @@
       <!-- 步骤 2：数据初始化 -->
       <section v-show="step === 1">
         <div class="brand">
-          <h2>初始化你的数据</h2>
-          <p class="sub">可选择一键建立常用分类，或从已有备份恢复</p>
+          <h2>{{ cloudHasData ? '云端已有数据，无需初始化' : '初始化你的数据' }}</h2>
+          <p class="sub">{{ cloudHasData ? '本端将直接登录并使用同一份云端数据' : '可选择一键建立常用分类，或从已有备份恢复' }}</p>
         </div>
 
-        <label class="opt-row">
-          <input type="checkbox" v-model="importLcsc" :disabled="backupImported" />
+        <!-- 在线模式下的初始化提示：命中已有数据 → 跳过；未登录 → 等登录后再判定 -->
+        <p v-if="mode === 'supabase' && remoteState === 'has'" class="remote-note ok">
+          <CircleCheck :size="13" style="display:inline-flex;flex-shrink:0" />
+          检测到该账号云端已有数据，已跳过初始化（避免重复建分类）
+        </p>
+        <p v-else-if="mode === 'supabase' && remoteState === 'unknown'" class="remote-note">
+          <CircleAlert :size="13" style="display:inline-flex;flex-shrink:0" />
+          校验前未读到本地会话，首次登录成功后会自动检测：云端已有数据则跳过初始化，为空才导入常用分类
+        </p>
+
+        <label class="opt-row" :class="{ off: cloudHasData }">
+          <input type="checkbox" v-model="importLcsc" :disabled="backupImported || cloudHasData" />
           <div class="opt-txt">
             <b>导入立创分类</b>
             <small>一键建立大类 / 小类与参数模板（可稍后在分类管理重试）</small>
@@ -119,8 +129,9 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { Sun, Moon, Palette, Box, HardDrive, Cloud, Check, Download, CircleCheck, CircleAlert } from 'lucide-vue-next'
 import { useTheme } from '../composables/useTheme'
-import { validateSupabase } from '../lib/supabaseValidate'
+import { validateSupabase, probeSupabaseHasData } from '../lib/supabaseValidate'
 import { importLcscCategories, type ImportProgress } from '../lib/db'
+import { markPendingInit } from '../lib/firstRun'
 import { setAppSettings, setSetupDone } from '../lib/appSettings'
 import { resetStore } from '../lib/storage'
 import { resetSupabaseClient } from '../lib/supabase'
@@ -133,6 +144,13 @@ const toast = useToast()
 
 const step = ref(0)
 const mode = ref<'sqlite' | 'supabase'>('sqlite')
+
+/**
+ * 在线模式下「云端是否已有数据」的探测结果：
+ * has=已有数据（跳过初始化）/ empty=确认为空 / unknown=未登录，读不到（等登录后判定）
+ */
+const remoteState = ref<'unknown' | 'has' | 'empty'>('unknown')
+const cloudHasData = computed(() => mode.value === 'supabase' && remoteState.value === 'has')
 
 const supaUrl = ref('')
 const supaAnon = ref('')
@@ -167,10 +185,18 @@ onUnmounted(() => clearTimeout(timer))
 async function nextFromA() {
   if (!canNext.value) return
   if (mode.value === 'supabase') {
+    const u = supaUrl.value.trim()
+    const k = supaAnon.value.trim()
     validating.value = true
-    const ok = await validateSupabase(supaUrl.value.trim(), supaAnon.value.trim())
+    const ok = await validateSupabase(u, k)
+    if (!ok) { supaStatus.value = 'err'; validating.value = false; return }
+    // 已有本地会话（同设备重装 / 曾登录过）才能查到自己的数据；未登录返回 unknown，留到登录后判定
+    const has = await probeSupabaseHasData(u, k)
+    remoteState.value = has ? 'has' : has === null ? 'unknown' : 'empty'
     validating.value = false
-    if (!ok) { supaStatus.value = 'err'; return }
+    if (has) importLcsc.value = false
+  } else {
+    remoteState.value = 'empty'
   }
   step.value = 1
 }
@@ -222,14 +248,21 @@ async function finish() {
     resetStore()
     resetSupabaseClient()
 
-    if (importLcsc.value && !backupImported.value) {
-      importing.value = true
-      try {
-        await importLcscCategories(onProgress)
-      } catch (e) {
-        toast.error('立创分类导入失败，可稍后在「分类管理」重试：' + (e as Error).message)
-      } finally {
-        importing.value = false
+    const seedLcsc = importLcsc.value && !backupImported.value && !cloudHasData.value
+    if (seedLcsc) {
+      if (mode.value === 'supabase' && remoteState.value === 'unknown') {
+        // 在线模式 + 还没登录：RLS 挡着写不了，推迟到首次登录成功后，
+        // 由 runPendingInit 先看云端有没有数据再决定要不要导（有就跳过）
+        markPendingInit()
+      } else {
+        importing.value = true
+        try {
+          await importLcscCategories(onProgress)
+        } catch (e) {
+          toast.error('立创分类导入失败，可稍后在「分类管理」重试：' + (e as Error).message)
+        } finally {
+          importing.value = false
+        }
       }
     }
 
@@ -326,6 +359,10 @@ async function finish() {
 .actions .btn-ghost { height: var(--ctrl-h-lg); padding: 0 18px; }
 
 .opt-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: var(--r-md); background: var(--c-glass); border: 1px solid var(--c-border); cursor: pointer; }
+.opt-row.off { opacity: 0.55; cursor: not-allowed; }
+
+.remote-note { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 10px; padding: 10px 12px; border-radius: var(--r-md); background: rgba(79,140,255,0.08); color: var(--c-primary); font-size: var(--fs-xs); line-height: 1.5; }
+.remote-note.ok { background: rgba(52,218,191,0.12); color: var(--c-success); }
 .opt-row input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--c-primary); cursor: pointer; }
 .opt-txt b { font-size: var(--fs-sm); color: var(--c-text); }
 .opt-txt small { display: block; font-size: var(--fs-xs); color: var(--c-text-2); margin-top: 2px; }

@@ -45,6 +45,7 @@ import { useRouter } from 'vue-router'
 import { Box, Mail, Lock, LogIn, UserPlus, HardDrive } from 'lucide-vue-next'
 import { signIn, signUp, setAuthState } from '../lib/auth'
 import { setDataMode } from '../lib/appSettings'
+import { runPendingInit } from '../lib/firstRun'
 
 const REMEMBER_KEY = 'vault:remember-email'
 const router = useRouter()
@@ -62,6 +63,26 @@ onMounted(() => {
 })
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/**
+ * 补做引导遗留的初始化（导入常用分类）。
+ * 在线模式下引导阶段读不到也写不了（RLS），所以推迟到登录后这里执行：
+ * 若检测到云端已有数据（同一账号只是多了一端）就直接跳过，什么都不做。
+ * 失败也不阻塞进主界面，可在「分类管理」里重试。
+ */
+async function applyPendingInit() {
+  try {
+    const r = await runPendingInit(p => {
+      msg.value = p.phase === 'done'
+        ? '常用分类导入完成'
+        : `正在导入 ${p.majorName} / ${p.minorName}`
+    })
+    if (r.hasData) msg.value = '检测到云端已有数据，已跳过初始化'
+    else if (!r.skipped) msg.value = '常用分类已就绪'
+  } catch {
+    msg.value = ''
+  }
+}
 
 function fail(msgText: string) {
   isErr.value = true
@@ -82,6 +103,7 @@ async function doLogin() {
       if (remember.value) localStorage.setItem(REMEMBER_KEY, e)
       else localStorage.removeItem(REMEMBER_KEY)
       setAuthState(true)
+      await applyPendingInit()
       router.push('/')
     }
   } finally { loading.value = false }
@@ -96,7 +118,7 @@ async function doSignup() {
   try {
     const { data, error } = await signUp(e, p)
     if (error) { isErr.value = true; msg.value = error.message }
-    else if (data.session) { setAuthState(true); router.push('/') }
+    else if (data.session) { setAuthState(true); await applyPendingInit(); router.push('/') }
     else { msg.value = '注册成功，请查收验证邮件后再登录' }
   } finally { loading.value = false }
 }

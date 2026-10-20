@@ -33,7 +33,7 @@ import ConfirmDialog from './components/ConfirmDialog.vue'
 
 const route = useRoute()
 // 同步探测：首帧即选中正确 Shell，避免移动端先闪桌面壳
-const isDesktop = ref(getPlatformSync().kind !== 'desktop')
+const isDesktop = ref(getPlatformSync().kind === 'desktop')
 //  const isDesktop = ref(false)
 
 onMounted(() => {
