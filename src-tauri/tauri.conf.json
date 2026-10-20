@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LinglongBin",
+  "productName": "玲珑Bin",
   "version": "0.2.1",
   "identifier": "com.linglong.bin",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "LinglongBin",
+        "title": "玲珑Bin",
         "width": 1280,
         "height": 820,
         "minWidth": 100,
