@@ -1,6 +1,7 @@
 <template>
   <div class="pane-general">
-    <div class="profile">
+    <!-- 移动端把账户区提到设置首页（ProfileCard），这里隐藏避免重复 -->
+    <div v-if="showProfile" class="profile">
       <div class="avatar">
         <span>{{ email.charAt(0).toUpperCase() || 'U' }}</span>
       </div>
@@ -74,7 +75,8 @@ import { lcscCacheClear, lcscCacheCount } from '../lib/lcscCache'
 import { confirm } from '../composables/confirm'
 import { useToast } from '../composables/toast'
 
-defineProps<{ embedded?: boolean }>()
+/** embedded：作为 Settings 的子面板嵌入；showProfile：是否渲染账户区（移动端设为 false） */
+withDefaults(defineProps<{ embedded?: boolean; showProfile?: boolean }>(), { showProfile: true })
 
 const { theme, setTheme } = useTheme()
 const email = ref('—')

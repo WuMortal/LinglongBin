@@ -14,14 +14,26 @@
     <!-- 功能宫格：库存作业 -->
     <section class="group">
       <h2 class="group-title">
-        <ArrowLeftRight :size="14" style="display: inline-flex; flex-shrink: 0" />库存管理
+        <ArrowLeftRight :size="14" style="display: inline-flex; flex-shrink: 0" />库存中心
       </h2>
       <nav class="grid-entry">
+        <button class="entry" @click="go('/m/stock/list')">
+          <span class="e-ico blue">
+            <Boxes :size="17" style="display: inline-flex; flex-shrink: 0" />
+          </span>
+          <span class="e-name">库存列表</span>
+        </button>
         <button class="entry" @click="go('/m/stock/logs')">
           <span class="e-ico blue">
             <History :size="17" style="display: inline-flex; flex-shrink: 0" />
           </span>
           <span class="e-name">出入库记录</span>
+        </button>
+        <button class="entry" @click="go('/m/stock/take')">
+          <span class="e-ico purple">
+            <ClipboardCheck :size="17" style="display: inline-flex; flex-shrink: 0" />
+          </span>
+          <span class="e-name">盘点</span>
         </button>
         <button class="entry" @click="go('/m/stock/purchase')">
           <span class="e-ico red">
@@ -34,12 +46,6 @@
             <Upload :size="17" style="display: inline-flex; flex-shrink: 0" />
           </span>
           <span class="e-name">导入入库</span>
-        </button>
-        <button class="entry" @click="go('/m/stock/take')">
-          <span class="e-ico purple">
-            <ClipboardCheck :size="17" style="display: inline-flex; flex-shrink: 0" />
-          </span>
-          <span class="e-name">盘点</span>
         </button>
         <button class="entry" @click="batchOpen = true">
           <span class="e-ico teal">
@@ -119,7 +125,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  History, ShoppingCart, Upload, ClipboardCheck, ArrowLeftRight, List,
+  Boxes, History, ShoppingCart, Upload, ClipboardCheck, ArrowLeftRight, List,
   TriangleAlert, CircleCheck,
 } from 'lucide-vue-next'
 import KpiCards from '../../components/KpiCards.vue'

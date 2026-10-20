@@ -1,29 +1,32 @@
 <template>
   <section class="mpage">
-    <!-- 设置列表 -->
-    <template v-if="!active">
-      <!-- <header class="head">
-        <h1>设置</h1>
-      </header> -->
-
-      <div class="set-group">
-        <button v-for="t in tabs" :key="t.key" class="set-row" @click="active = t.key">
-          <span class="s-ico" :class="t.tone">
-            <component :is="t.icon" :size="18" style="display: inline-flex; flex-shrink: 0" />
-          </span>
-          <span class="s-name">{{ t.label }}</span>
-          <ChevronRight :size="16" class="s-arrow" style="display: inline-flex; flex-shrink: 0" />
-        </button>
+    <!-- 列表 ↔ 子面板：复用全局 page 过渡，与进物料详情等路由跳转完全一致 -->
+    <Transition name="page" mode="out-in">
+      <!-- 设置列表：账户卡片 + 分组入口 -->
+      <div v-if="!active" key="list" class="list">
+        <ProfileCard />
+        <div class="set-group">
+          <button v-for="t in tabs" :key="t.key" class="set-row" :class="{ pressed: pressed === t.key }"
+            @click="active = t.key" @touchstart.passive="pressed = t.key" @touchend="pressed = null"
+            @touchcancel="pressed = null" @mousedown="pressed = t.key" @mouseup="pressed = null"
+            @mouseleave="pressed = null">
+            <span class="s-ico" :class="t.tone">
+              <component :is="t.icon" :size="18" style="display: inline-flex; flex-shrink: 0" />
+            </span>
+            <span class="s-name">{{ t.label }}</span>
+            <ChevronRight :size="16" class="s-arrow" style="display: inline-flex; flex-shrink: 0" />
+          </button>
+        </div>
       </div>
-    </template>
 
-    <!-- 子面板：吸顶返回栏 + 复用桌面 pane（embedded） -->
-    <template v-else>
-      <NavBar :title="activeLabel" @back="active = null" />
-      <div class="pane-wrap">
-        <component :is="paneMap[active]" embedded />
+      <!-- 子面板：吸顶返回栏 + 复用桌面 pane（embedded） -->
+      <div v-else key="pane" class="sub">
+        <NavBar :title="activeLabel" @back="active = null" />
+        <div class="pane-wrap">
+          <component :is="paneMap[active]" v-bind="paneProps" embedded />
+        </div>
       </div>
-    </template>
+    </Transition>
   </section>
 </template>
 
@@ -31,6 +34,7 @@
 import { ref, computed, type Component } from 'vue'
 import { ChevronRight, Settings, Database, Folder, Truck, Info, BookText } from 'lucide-vue-next'
 import NavBar from '../../components/mobile/NavBar.vue'
+import ProfileCard from '../../components/mobile/ProfileCard.vue'
 import Categories from '../Categories.vue'
 import Suppliers from '../Suppliers.vue'
 import BasicData from '../BasicData.vue'
@@ -53,6 +57,8 @@ const tabs = [
 
 type TabKey = typeof tabs[number]['key']
 const active = ref<TabKey | null>(null)
+/** 当前被按下的行（CSS :active 在触屏上不可靠，用事件自己维护） */
+const pressed = ref<TabKey | null>(null)
 
 const paneMap: Record<TabKey, Component> = {
   general: GeneralSettings,
@@ -64,6 +70,11 @@ const paneMap: Record<TabKey, Component> = {
 }
 
 const activeLabel = computed(() => tabs.find(t => t.key === active.value)?.label || '')
+
+/** 账户区已上移到设置首页的 ProfileCard，进「常规」时隐藏 pane 内那份，避免重复 */
+const paneProps = computed<Record<string, unknown>>(() =>
+  active.value === 'general' ? { showProfile: false } : {}
+)
 </script>
 
 <style scoped>
@@ -84,7 +95,15 @@ const activeLabel = computed(() => tabs.find(t => t.key === active.value)?.label
   letter-spacing: -0.02em;
 }
 
-/* ===== 设置列表（分组卡片行） ===== */
+/* ===== 设置列表 ===== */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+/* 分组卡片行 */
 .set-group {
   display: flex;
   flex-direction: column;
@@ -112,14 +131,17 @@ const activeLabel = computed(() => tabs.find(t => t.key === active.value)?.label
   text-align: left;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  transition: background var(--motion), transform var(--motion);
 }
 
 .set-row:last-child {
   border-bottom: none;
 }
 
-.set-row:active {
+.set-row:active,
+.set-row.pressed {
   background: var(--c-surface-hover);
+  transform: scale(0.985);
 }
 
 .s-ico {
@@ -161,6 +183,13 @@ const activeLabel = computed(() => tabs.find(t => t.key === active.value)?.label
 }
 
 /* ===== 子面板 ===== */
+.sub {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .pane-wrap {
   margin-top: 14px;
 }

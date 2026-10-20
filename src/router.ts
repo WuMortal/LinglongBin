@@ -77,8 +77,9 @@ export const mobileRoutes: RouteRecordRaw[] = [
   { path: '/m/stats', name: 'm-stats', component: () => import('./pages/Stats.vue'), meta: { title: '统计', icon: 'chart', mobile: true } },
   { path: '/m/settings', name: 'm-settings', component: () => import('./pages/mobile/Settings.vue'), meta: { title: '设置', icon: 'gear', mobile: true } },
   // ===== bare 子页（首页宫格入口，SubPage 壳内复用桌面组件） =====
-  // /m/stock 无独立页：库存中心在移动端拆散为工作台宫格入口，镜像时归到首页
-  { path: '/m/stock', redirect: '/m/home' },
+  // 与 PC 一致：/m/stock 默认落在「库存列表」（桌面 /stock 的首个 tab）
+  { path: '/m/stock', redirect: '/m/stock/list' },
+  { path: '/m/stock/list', name: 'm-stock-list', component: () => import('./pages/mobile/sub/StockListPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/logs', name: 'm-stock-logs', component: () => import('./pages/mobile/sub/StockLogsPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/purchase', name: 'm-stock-purchase', component: () => import('./pages/mobile/sub/StockPurchasePage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/import', name: 'm-stock-import', component: () => import('./pages/mobile/sub/StockImportPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
