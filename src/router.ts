@@ -15,6 +15,8 @@ declare module 'vue-router' {
     activeMenu?: string
     /** 移动端路由（/m 组），MobileShell tabbar 导航使用 */
     mobile?: boolean
+    /** 移动端全屏页（如详情页）：隐藏 tabbar，页面自带返回栏与底部操作栏 */
+    bare?: boolean
   }
 }
 
@@ -57,29 +59,31 @@ export const routes: RouteRecordRaw[] = [
 ]
 
 /**
- * 移动端路由组（/m 前缀）：MobileShell tabbar 导航专用。
- * P1 阶段组件暂复用桌面页面（已有响应式适配），P2 逐页替换为专属移动页面；
+ * 移动端路由组（/m 前缀）：Tabbar 四页（首页/物料/统计/设置）+ bare 全屏子页。
+ * 首页 = 库存工作台（KPI + 功能宫格）；宫格子页与设置子面板在 SubPage 壳内复用桌面组件，P2 逐个移动化；
  * 桌面路由零波及，守卫会把移动端的桌面路径自动镜像到 /m 前缀。
  */
 export const mobileRoutes: RouteRecordRaw[] = [
   { path: '/m', redirect: '/m/home' },
-  { path: '/m/home', name: 'm-home', component: () => import('./pages/Home.vue'), meta: { title: '物料库', icon: 'grid', mobile: true } },
+  { path: '/m/home', name: 'm-home', component: () => import('./pages/mobile/Home.vue'), meta: { title: '首页', icon: 'home', mobile: true } },
+  { path: '/m/materials', name: 'm-materials', component: () => import('./pages/mobile/Materials.vue'), meta: { title: '物料', icon: 'grid', mobile: true } },
+  // 物料详情：全屏页（电商商详式），隐藏 tabbar，tabbar 高亮归到物料
   {
-    path: '/m/stock',
-    name: 'm-stock',
-    component: () => import('./pages/Stock.vue'),
-    meta: { title: '库存', icon: 'box', mobile: true },
-    children: [
-      { path: '', name: 'm-stock-list', component: () => import('./pages/stock/StockList.vue'), meta: { title: '库存列表', mobile: true } },
-      { path: 'logs', name: 'm-stock-logs', component: () => import('./pages/stock/StockLogs.vue'), meta: { title: '出入库记录', mobile: true } },
-      { path: 'purchase', name: 'm-stock-purchase', component: () => import('./pages/stock/StockPurchase.vue'), meta: { title: '待采单', mobile: true } },
-      { path: 'import', name: 'm-stock-import', component: () => import('./pages/stock/StockImport.vue'), meta: { title: '导入入库', mobile: true } },
-      { path: 'take', name: 'm-stock-take', component: () => import('./pages/stock/StockTake.vue'), meta: { title: '盘点', mobile: true } },
-    ],
+    path: '/m/material/:id',
+    name: 'm-material',
+    component: () => import('./pages/mobile/MaterialDetail.vue'),
+    meta: { bare: true, activeMenu: '/m/materials' },
   },
-  { path: '/m/tools', name: 'm-tools', component: () => import('./pages/Tools.vue'), meta: { title: '工具', icon: 'wrench', mobile: true } },
-  { path: '/m/bom', name: 'm-bom', component: () => import('./pages/BOM.vue'), meta: { title: 'BOM 项目', icon: 'list', mobile: true } },
-  { path: '/m/stats', name: 'm-stats', component: () => import('./pages/Stats.vue'), meta: { title: '统计看板', icon: 'chart', mobile: true } },
+  { path: '/m/stats', name: 'm-stats', component: () => import('./pages/Stats.vue'), meta: { title: '统计', icon: 'chart', mobile: true } },
+  { path: '/m/settings', name: 'm-settings', component: () => import('./pages/mobile/Settings.vue'), meta: { title: '设置', icon: 'gear', mobile: true } },
+  // ===== bare 子页（首页宫格入口，SubPage 壳内复用桌面组件） =====
+  // /m/stock 无独立页：库存中心在移动端拆散为工作台宫格入口，镜像时归到首页
+  { path: '/m/stock', redirect: '/m/home' },
+  { path: '/m/stock/logs', name: 'm-stock-logs', component: () => import('./pages/mobile/sub/StockLogsPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/purchase', name: 'm-stock-purchase', component: () => import('./pages/mobile/sub/StockPurchasePage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/import', name: 'm-stock-import', component: () => import('./pages/mobile/sub/StockImportPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/stock/take', name: 'm-stock-take', component: () => import('./pages/mobile/sub/StockTakePage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  { path: '/m/bom', name: 'm-bom', component: () => import('./pages/mobile/sub/BomPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
 ]
 
 // Tauri / 移动端 webview 用 hash 路由更稳，避免深链 404
