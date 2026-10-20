@@ -28,11 +28,19 @@ defineProps<{ title: string }>()
   min-height: 100%;
 }
 
+/* 卡片容器：桌面的 .tab 页面自身没有背景/描边/圆角，靠 Stock.vue 的 .main.card 提供；
+   移动端没有这一层，这里补上，保证与物料详情、统计等移动页同一套卡片语言。
+   注意不给 padding —— 子页面（.filters / .po-bar / .take-bar）自带内边距，
+   加 padding 会和子页面的 16px 叠成双层内缩。 */
 .sub-body {
-  margin-top: 14px;
+  flex: 1;
+  min-height: 0;
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  flex: 1;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-xl);
+  overflow: hidden;
 }
 </style>

@@ -1,7 +1,11 @@
 <template>
   <section class="mpage">
-    <!-- 吸顶：搜索 + 筛选（参考立创商城：搜索框 + 右侧筛选入口） -->
-    <div class="topbar">
+    <!-- 下拉刷新只包住滚动内容：PullRefresh 的内容层带 transform，会成为 fixed 的包含块，
+         所以 FAB / 弹窗 / 筛选面板必须留在外面，否则会跟着位移或错位。
+         section 保持单一根节点，<Transition mode="out-in"> 才能正常算出进出场。 -->
+    <PullRefresh @refresh="onRefresh">
+      <!-- 吸顶：搜索 + 筛选（参考立创商城：搜索框 + 右侧筛选入口） -->
+      <div class="topbar">
       <div class="search-row">
         <div class="search">
           <Search :size="14" class="s-ico" style="display: inline-flex; flex-shrink: 0" />
@@ -119,7 +123,8 @@
 
       <!-- 无限滚动哨兵：始终在 DOM，IntersectionObserver 监听 -->
       <div ref="sentinelEl" class="sentinel" />
-    </div>
+      </div>
+    </PullRefresh>
 
     <!-- 添加物料 FAB（悬浮在 tabbar 上方） -->
     <button class="fab" title="添加物料" @click="openAdd">
@@ -139,6 +144,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import PullRefresh from '../../components/mobile/PullRefresh.vue'
 import { Search, Plus, Box, Image as ImageIcon, X, SlidersHorizontal, Grid3x3, List, MapPin } from 'lucide-vue-next'
 import {
   listMaterials, countMaterials, listCategories,
@@ -300,6 +306,12 @@ async function load() {
   finally { loading.value = false }
 }
 
+/** 下拉刷新：回到第一页重拉（保留当前筛选条件），并顺带同步一次分类树 */
+async function onRefresh(done: () => void) {
+  await Promise.all([load(), loadCategories()])
+  done()
+}
+
 async function loadMore() {
   if (loading.value || loadingMore.value || !hasMore.value || error.value) return
   loadingMore.value = true
@@ -379,6 +391,14 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+}
+
+/* PullRefresh 在 section 内部：把 flex 链传下去，否则 .list-wrap 的 flex:1 失效 */
+.mpage :deep(.pr-wrap),
+.mpage :deep(.pr-content) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 /* ===== 吸顶工具区：搜索 + 筛选 =====

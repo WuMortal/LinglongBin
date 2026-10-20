@@ -1257,6 +1257,18 @@ onMounted(loadProjects)
   flex-shrink: 0;
 }
 
+/* 移动端（/m/bom 的标题由 SubPage 的 NavBar 提供）：
+   页头文案与 NavBar 重复，隐藏标题与副标题，只保留「导入 BOM」等操作并右对齐 */
+@media (max-width: 820px) {
+  .head > div:first-child {
+    display: none;
+  }
+
+  .head {
+    justify-content: flex-end;
+  }
+}
+
 /* 抽屉滑入 / 淡出动画 */
 .bomdrawer-enter-active,
 .bomdrawer-leave-active {

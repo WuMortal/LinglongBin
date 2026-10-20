@@ -32,9 +32,8 @@ import Toast from './components/Toast.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 
 const route = useRoute()
-// 同步探测：首帧即选中正确 Shell，避免移动端先闪桌面壳
+
 const isDesktop = ref(getPlatformSync().kind === 'desktop')
-//  const isDesktop = ref(false)
 
 onMounted(() => {
   // 登录态由路由守卫统一门控，这里仅同步模块级状态以便守卫读取

@@ -60,6 +60,7 @@ function onBack() {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 状态栏区域已由 MobileShell 在滚动容器外预留，这里不能再垫一份，否则高度翻倍 */
   height: 52px;
   /* 水平负外边距 = 通栏；顶部不加负 margin（.content 顶部 padding 本就是 0） */
   margin: 0 -16px;
