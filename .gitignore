@@ -46,3 +46,8 @@ scripts/
 
 tauri.key
 tauri.key.pub
+
+# Android 签名密钥（千万别入库）
+*.jks
+*.keystore
+src-tauri/keystore.*

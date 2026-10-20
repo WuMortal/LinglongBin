@@ -25,6 +25,24 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    // 发布签名：密钥不入库，全部从环境变量 / ~/.gradle/gradle.properties 读
+    // LLB_KEYSTORE_PATH / LLB_KEYSTORE_PASSWORD / LLB_KEY_ALIAS / LLB_KEY_PASSWORD
+    // 四个变量没配齐时保持未签名（只能本地自测，真机安装会报「安装包没有签名文件」）
+    signingConfigs {
+        create("release") {
+            val gradleProp = { k: String -> project.findProperty(k) as String? }
+            val ksPath = System.getenv("LLB_KEYSTORE_PATH") ?: gradleProp("LLB_KEYSTORE_PATH")
+            val ksPwd = System.getenv("LLB_KEYSTORE_PASSWORD") ?: gradleProp("LLB_KEYSTORE_PASSWORD")
+            val alias = System.getenv("LLB_KEY_ALIAS") ?: gradleProp("LLB_KEY_ALIAS")
+            val keyPwd = System.getenv("LLB_KEY_PASSWORD") ?: gradleProp("LLB_KEY_PASSWORD")
+            if (ksPath != null && ksPwd != null && alias != null && keyPwd != null) {
+                storeFile = file(ksPath)
+                storePassword = ksPwd
+                keyAlias = alias
+                keyPassword = keyPwd
+            }
+        }
+    }
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -48,6 +66,10 @@ android {
                   exclude("build/**")
                 }.files.toTypedArray()
             )
+            // 配齐签名变量才挂上去，否则 release 构建会因 storeFile 为空直接失败
+            if (signingConfigs.getByName("release").storeFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
