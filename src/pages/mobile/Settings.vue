@@ -1,51 +1,37 @@
 <template>
   <section class="mpage">
-    <!-- 列表 ↔ 子面板：复用全局 page 过渡，与进物料详情等路由跳转完全一致 -->
-    <Transition name="page" mode="out-in">
-      <!-- 设置列表：账户卡片 + 分组入口 -->
-      <div v-if="!active" key="list" class="list">
-        <ProfileCard />
-        <div class="set-group">
-          <button v-for="t in tabs" :key="t.key" class="set-row" :class="{ pressed: pressed === t.key }"
-            @click="active = t.key" @touchstart.passive="pressed = t.key" @touchend="pressed = null"
-            @touchcancel="pressed = null" @mousedown="pressed = t.key" @mouseup="pressed = null"
-            @mouseleave="pressed = null">
-            <span class="s-ico" :class="t.tone">
-              <component :is="t.icon" :size="18" style="display: inline-flex; flex-shrink: 0" />
-            </span>
-            <span class="s-name">{{ t.label }}</span>
-            <ChevronRight :size="16" class="s-arrow" style="display: inline-flex; flex-shrink: 0" />
-          </button>
-        </div>
+    <!-- 设置列表：账户卡片 + 分组入口（子面板已拆成独立路由页 /m/settings/:tab） -->
+    <div class="list">
+      <ProfileCard />
+      <div class="set-group">
+        <button v-for="t in tabs" :key="t.key" class="set-row" :class="{ pressed: pressed === t.key }"
+          @click="open(t.key)" @touchstart.passive="pressed = t.key" @touchend="pressed = null"
+          @touchcancel="pressed = null" @mousedown="pressed = t.key" @mouseup="pressed = null"
+          @mouseleave="pressed = null">
+          <span class="s-ico" :class="t.tone">
+            <component :is="t.icon" :size="18" style="display: inline-flex; flex-shrink: 0" />
+          </span>
+          <span class="s-name">{{ t.label }}</span>
+          <ChevronRight :size="16" class="s-arrow" style="display: inline-flex; flex-shrink: 0" />
+        </button>
       </div>
-
-      <!-- 子面板：吸顶返回栏 + 复用桌面 pane（embedded） -->
-      <div v-else key="pane" class="sub">
-        <NavBar :title="activeLabel" @back="active = null" />
-        <div class="pane-wrap">
-          <component :is="paneMap[active]" v-bind="paneProps" embedded />
-        </div>
-      </div>
-    </Transition>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, type Component } from 'vue'
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ChevronRight, Settings, Database, Folder, Truck, Info, BookText } from 'lucide-vue-next'
-import NavBar from '../../components/mobile/NavBar.vue'
 import ProfileCard from '../../components/mobile/ProfileCard.vue'
-import Categories from '../Categories.vue'
-import Suppliers from '../Suppliers.vue'
-import BasicData from '../BasicData.vue'
-import GeneralSettings from '../GeneralSettings.vue'
-import DataStorage from '../DataStorage.vue'
-import AboutPane from '../AboutPane.vue'
 
 /**
- * 移动端设置 Tab：分组列表入口 → 子面板复用桌面 Settings 的 pane 组件（embedded 模式）。
- * pane 内部布局的移动端适配后续专项优化，先保证可达可用。
+ * 移动端设置 Tab：分组列表入口。
+ * 子面板（常规 / 数据存储 / 基础数据 / 分类管理 / 供应商管理 / 关于）已拆成独立路由页
+ * /m/settings/:tab（见 SettingsPane.vue），点进去会写入历史，系统返回键回到本列表。
  */
+const router = useRouter()
+
 const tabs = [
   { key: 'general', label: '常规', icon: Settings, tone: 'blue' },
   { key: 'data', label: '数据存储', icon: Database, tone: 'teal' },
@@ -56,25 +42,12 @@ const tabs = [
 ] as const
 
 type TabKey = typeof tabs[number]['key']
-const active = ref<TabKey | null>(null)
 /** 当前被按下的行（CSS :active 在触屏上不可靠，用事件自己维护） */
 const pressed = ref<TabKey | null>(null)
 
-const paneMap: Record<TabKey, Component> = {
-  general: GeneralSettings,
-  data: DataStorage,
-  dicts: BasicData,
-  categories: Categories,
-  suppliers: Suppliers,
-  about: AboutPane,
+function open(key: TabKey) {
+  router.push('/m/settings/' + key)
 }
-
-const activeLabel = computed(() => tabs.find(t => t.key === active.value)?.label || '')
-
-/** 账户区已上移到设置首页的 ProfileCard，进「常规」时隐藏 pane 内那份，避免重复 */
-const paneProps = computed<Record<string, unknown>>(() =>
-  active.value === 'general' ? { showProfile: false } : {}
-)
 </script>
 
 <style scoped>
@@ -180,17 +153,5 @@ const paneProps = computed<Record<string, unknown>>(() =>
 
 .s-arrow {
   color: var(--c-text-3);
-}
-
-/* ===== 子面板 ===== */
-.sub {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-.pane-wrap {
-  margin-top: 14px;
 }
 </style>

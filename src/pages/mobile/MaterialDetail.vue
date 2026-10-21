@@ -45,7 +45,9 @@
           <div class="kv"><span>创建时间</span><b>{{ fmtTime(m.created_at) }}</b></div>
           <div class="kv">
             <span>物料链接</span>
-            <a v-if="m.link" class="link" href="#" @click.prevent="openDs(m.link!)">打开<ArrowUpRight :size="12" style="display: inline-flex; flex-shrink: 0" /></a>
+            <a v-if="m.link" class="link" href="#" @click.prevent="openDs(m.link!)">打开
+              <ArrowUpRight :size="12" style="display: inline-flex; flex-shrink: 0" />
+            </a>
             <b v-else>—</b>
           </div>
         </div>
@@ -84,7 +86,9 @@
       <!-- 出入库记录 -->
       <section class="sec">
         <h3>出入库记录</h3>
-        <div v-if="logLoading" class="sec-hint"><div class="spinner-sm" /></div>
+        <div v-if="logLoading" class="sec-hint">
+          <div class="spinner-sm" />
+        </div>
         <p v-else-if="!logs.length" class="sec-empty">暂无记录</p>
         <ul v-else class="log-list">
           <li v-for="r in logs" :key="r.id" :class="[r.type, { 'is-void': r.status === 'void' }]">
@@ -126,8 +130,8 @@
     <MaterialFormDialog v-model="showEdit" :categories="categories" :material="m" @saved="reload" />
 
     <!-- 出入库（移动端 bottom sheet，按钮决定初始入/出） -->
-    <QuickStockSheet :material="sheetOpen ? m : null" :initial-type="sheetOpen ?? undefined"
-      @done="onQuickDone" @close="sheetOpen = null" />
+    <QuickStockSheet :material="sheetOpen ? m : null" :initial-type="sheetOpen ?? undefined" @done="onQuickDone"
+      @close="sheetOpen = null" />
 
     <!-- 大图预览 -->
     <ImageViewer v-model:open="showViewer" :src="previewUrl" />
@@ -139,7 +143,9 @@
       <p>{{ loadError }}</p>
       <button class="btn btn-primary" @click="load">重试</button>
     </div>
-    <div v-else class="load-state"><div class="spinner-lg" /></div>
+    <div v-else class="load-state">
+      <div class="spinner-lg" />
+    </div>
   </section>
 </template>
 
@@ -728,10 +734,13 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-  background: var(--c-elevated);
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  background: var(--c-glass-strong);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border-top: 1px solid var(--c-border);
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--r-md);
 }
 
 .act-ico {
@@ -770,7 +779,7 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 44px;
+  height: 40px;
   border: none;
   border-radius: var(--r-md);
   font-family: inherit;
@@ -782,8 +791,13 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
   -webkit-tap-highlight-color: transparent;
 }
 
-.abtn.in { background: var(--c-primary); }
-.abtn.out { background: var(--c-danger); }
+.abtn.in {
+  background: var(--c-primary);
+}
+
+.abtn.out {
+  background: var(--c-danger);
+}
 
 .abtn:active {
   transform: scale(0.97);
@@ -822,6 +836,8 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -76,6 +76,9 @@ export const mobileRoutes: RouteRecordRaw[] = [
   },
   { path: '/m/stats', name: 'm-stats', component: () => import('./pages/Stats.vue'), meta: { title: '统计', icon: 'chart', mobile: true } },
   { path: '/m/settings', name: 'm-settings', component: () => import('./pages/mobile/Settings.vue'), meta: { title: '设置', icon: 'gear', mobile: true } },
+  // 设置子面板：拆成独立路由页，系统返回键才能回到设置列表（旧实现用内部 active 状态切换、
+  // 不进历史，导致返回直接退出设置）。bare=true 隐藏 tabbar，归并高亮到设置 Tab。
+  { path: '/m/settings/:tab', name: 'm-settings-tab', component: () => import('./pages/mobile/SettingsPane.vue'), meta: { activeMenu: '/m/settings', bare: true } },
   // ===== bare 子页（首页宫格入口，SubPage 壳内复用桌面组件） =====
   // 与 PC 一致：/m/stock 默认落在「库存列表」（桌面 /stock 的首个 tab）
   { path: '/m/stock', redirect: '/m/stock/list' },

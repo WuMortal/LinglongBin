@@ -18,6 +18,18 @@ function forceMobile(): boolean {
 }
 
 /**
+ * npm script 用 `vite --mode mobile|desktop` 指定的外壳（见 package.json 的 dev:mobile / dev:desktop），
+ * 优先级高于自动探测，方便在桌面浏览器里直接预览移动端而不用改窗口宽度。
+ * 只在显式指定时生效：默认的 development / production 模式返回 null，真机与打包都不受影响。
+ */
+function modeOverride(): 'desktop' | 'mobile' | null {
+  const mode: string = import.meta.env.MODE
+  if (mode === 'mobile') return 'mobile'
+  if (mode === 'desktop') return 'desktop'
+  return null
+}
+
+/**
  * 开关「桌面浏览器内预览移动端」：写入 localStorage 后刷新生效，并清掉探测缓存。
  * 必须是唯一判定来源 —— Shell 选择（App.vue）与路由镜像（router.ts 守卫）都读 getPlatformSync，
  * 之前在 App.vue 里写死 isDesktop 会让外壳走移动、路由仍按桌面放行，从而渲染出桌面页面。
@@ -38,9 +50,12 @@ export function getPlatformSync(): PlatformInfo {
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   const mobileUA = /Android|iPhone|iPad|iPod/i.test(ua)
 
-  const kind: 'desktop' | 'mobile' = isTauri
-    ? (mobileUA ? 'mobile' : 'desktop')
-    : (forceMobile() || window.matchMedia('(max-width: 820px)').matches ? 'mobile' : 'desktop')
+  // 优先级：npm script 的 --mode > Tauri 真机 UA > 浏览器 localStorage 开关 / 视口宽度
+  const forced = modeOverride()
+  const kind: 'desktop' | 'mobile' = forced
+    ?? (isTauri
+      ? (mobileUA ? 'mobile' : 'desktop')
+      : (forceMobile() || window.matchMedia('(max-width: 820px)').matches ? 'mobile' : 'desktop'))
 
   cached = { kind, os: isTauri ? (mobileUA ? 'android/ios' : 'desktop') : 'web', isTauri }
   return cached

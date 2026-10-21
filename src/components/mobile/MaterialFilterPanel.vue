@@ -302,6 +302,9 @@ watch(() => props.open, async (open) => {
   box-shadow: var(--shadow-pop);
   border-radius: var(--r-lg) 0 0 var(--r-lg);
   overflow: hidden;
+  /* Teleport 到 body 的 fixed 元素不受 MobileShell 那层 padding-top 约束，
+     height:100% 会一直顶到状态栏：这里自己把状态栏高度让出来，内容从状态栏下方开始 */
+  padding-top: env(safe-area-inset-top);
 }
 
 .p-head {
@@ -460,7 +463,7 @@ watch(() => props.open, async (open) => {
 .btn-reset,
 .btn-ok {
   flex: 1;
-  height: 44px;
+  height: 40px;
   border-radius: var(--r-md);
   font-family: inherit;
   font-size: var(--fs-md);

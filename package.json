@@ -5,14 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mobile": "vite --mode mobile",
+    "dev:desktop": "vite --mode desktop",
     "build": "vue-tsc --noEmit && vite build",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:android-debug": "npx tauri android build --apk --debug",
-    "tauri:android-release": "npx tauri android build --apk",
-    "tauri:android-aab": "npx tauri android build --aab",    
+    "android:debug": "npx tauri android build --apk --debug",
+    "android:release": "npx tauri android build --apk",
+    "android:aab": "npx tauri android build --aab",    
     "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {

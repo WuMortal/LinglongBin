@@ -65,11 +65,15 @@ function onBack() {
   /* 水平负外边距 = 通栏；顶部不加负 margin（.content 顶部 padding 本就是 0） */
   margin: 0 -16px;
   padding: 0 10px 0 8px;
-  background: var(--c-glass-strong);
-  backdrop-filter: blur(24px) saturate(160%);
+  /* 0.8 不透明度，跟随主题 --c-bg 推导（原先用 --c-glass-strong，
+     暗色主题下只是 8% 白，内容滚过去几乎透明）。全局 token 不改，
+     tabbar / 弹窗都在用它，只提升吸顶栏。 */
+  background: rgba(12, 14, 20, 0.9);
+  background: color-mix(in srgb, var(--c-bg) 90%, transparent);
+  /* backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   border-bottom: 1px solid var(--c-border-hairline);
-  box-shadow: 0 6px 16px -12px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 6px 16px -12px rgba(0, 0, 0, 0.55); */
 }
 
 /* 底部品牌色渐隐细线，弱化生硬的分隔 */

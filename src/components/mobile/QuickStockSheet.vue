@@ -13,10 +13,10 @@
           <!-- 入 / 出 切换：触屏大号分段 -->
           <div class="seg">
             <button type="button" :class="{ on: type === 'in' }" @click="type = 'in'">
-              <ArrowDownToLine :size="16" style="display: inline-flex; flex-shrink: 0" />入库
+              <ArrowDownToLine :size="14" style="display: inline-flex; flex-shrink: 0" />入库
             </button>
             <button type="button" :class="{ on: type === 'out' }" @click="type = 'out'">
-              <ArrowUpFromLine :size="16" style="display: inline-flex; flex-shrink: 0" />出库
+              <ArrowUpFromLine :size="14" style="display: inline-flex; flex-shrink: 0" />出库
             </button>
           </div>
 
@@ -57,10 +57,13 @@
               enterkeyhint="done" @keyup.enter="submit" />
           </div>
 
-          <button class="submit" :class="type" :disabled="busy" @click="submit">
-            <span v-if="busy" class="spinner-sm" />
-            {{ busy ? '处理中…' : (type === 'in' ? '确认入库' : '确认出库') }}
-          </button>
+          <div class="submit-row">
+            <button class="btn-cancel" :disabled="busy" @click="emit('close')">取消</button>
+            <button class="submit" :class="type" :disabled="busy" @click="submit">
+              <span v-if="busy" class="spinner-sm" />
+              {{ busy ? '处理中…' : (type === 'in' ? '确认入库' : '确认出库') }}
+            </button>
+          </div>
         </div>
       </div>
     </Transition>
@@ -233,14 +236,15 @@ async function submit() {
 }
 
 /* ===== 入/出 分段（触屏大号） ===== */
+/* ===== 入 / 出 切换（iOS 分段控件：细轨 + 轻滑块，不再用大块实色） ===== */
 .seg {
   display: flex;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 4px;
-  background: var(--c-glass);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
+  gap: 3px;
+  margin-top: 12px;
+  padding: 3px;
+  background: var(--c-bg-2);
+  border: 1px solid var(--c-border-hairline);
+  border-radius: var(--r-lg);
 }
 
 .seg button {
@@ -248,31 +252,33 @@ async function submit() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 42px;
+  gap: 5px;
+  height: 34px;
   border: none;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: transparent;
   color: var(--c-text-2);
   font-family: inherit;
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 120ms ease-out, color 120ms ease-out;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .seg button.on {
-  background: var(--c-primary);
-  color: #fff;
-  box-shadow: var(--shadow-glow);
+  /* 浅色滑块而不是实色大块：轨道内浮起一层，视觉重量轻很多 */
+  background: var(--c-surface);
+  color: var(--c-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
 }
 
-/* ===== 数量步进器 ===== */
+/* ===== 数量步进器（与分段控件同一套细控件语言） ===== */
 .qty-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .lbl {
@@ -285,45 +291,51 @@ async function submit() {
 .stepper {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .st-btn {
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--c-border);
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--c-border-hairline);
   border-radius: var(--r-md);
-  background: var(--c-surface);
-  color: var(--c-text);
+  background: var(--c-bg-2);
+  color: var(--c-text-2);
   display: grid;
   place-items: center;
   cursor: pointer;
   padding: 0;
-  transition: background-color var(--motion-fast), border-color var(--motion-fast);
+  transition: background-color var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
   -webkit-tap-highlight-color: transparent;
 }
 
 .st-btn:active:not(:disabled) {
   background: var(--c-primary-soft);
   border-color: var(--c-primary);
+  color: var(--c-primary);
 }
 
 .st-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
 .stepper input {
-  width: 88px;
-  height: 40px;
+  width: 72px;
+  height: 34px;
   text-align: center;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
+  background: var(--c-bg-2);
+  border: 1px solid var(--c-border-hairline);
   border-radius: var(--r-md);
   color: var(--c-text);
+}
+
+.stepper input:focus {
+  outline: none;
+  border-color: var(--c-primary);
 }
 
 .stepper input:focus {
@@ -401,19 +413,44 @@ async function submit() {
   color: var(--c-text-3);
 }
 
-/* ===== 确认按钮（通栏大按钮） ===== */
+/* ===== 操作按钮区：取消 + 确认 并排 ===== */
+.submit-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.btn-cancel {
+  flex: 1;
+  height: 46px;
+  padding: 0 22px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--c-bg-2);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-cancel:active { background: var(--c-surface-hover); color: var(--c-text); }
+.btn-cancel:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ===== 确认按钮（占 2/3，取消占 1/3） ===== */
 .submit {
-  display: inline-flex;
+  flex: 2;
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: 100%;
   height: 46px;
-  margin-top: 16px;
+  padding: 0 18px;
   border: none;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   font-family: inherit;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
   font-weight: 700;
   color: #fff;
   cursor: pointer;
