@@ -8,8 +8,7 @@
       <div class="title-card">
         <div class="hd">
           <div class="thumb" @click="openViewer">
-            <img v-if="previewUrl" :src="previewUrl" alt="" />
-            <ImageIcon v-else :size="26" style="display: inline-flex; flex-shrink: 0" />
+            <img :src="previewUrl || NO_IMAGE_URL" alt="暂无图片" :onerror="NO_IMAGE_ONERROR" />
             <span v-if="isLow" class="low-tag">低库存</span>
           </div>
           <div class="hd-main">
@@ -83,8 +82,8 @@
         </div>
       </section>
 
-      <!-- 出入库记录 -->
-      <section class="sec">
+      <!-- 出入库记录（新建预览态无记录，隐藏） -->
+      <section class="sec" v-if="!props.material">
         <h3>出入库记录</h3>
         <div v-if="logLoading" class="sec-hint">
           <div class="spinner-sm" />
@@ -126,8 +125,8 @@
       </button>
     </div>
 
-    <!-- 编辑表单（复用桌面弹窗） -->
-    <MaterialFormDialog v-model="showEdit" :categories="categories" :material="m" @saved="reload" />
+    <!-- 编辑表单（移动端底部弹层） -->
+    <MaterialFormSheet v-model="showEdit" :categories="categories" :material="m" @saved="reload" />
 
     <!-- 出入库（移动端 bottom sheet，按钮决定初始入/出） -->
     <QuickStockSheet :material="sheetOpen ? m : null" :initial-type="sheetOpen ?? undefined" @done="onQuickDone"
@@ -153,16 +152,17 @@
 import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Image as ImageIcon, MapPin, ArrowUpRight, FileText, Pencil, Trash2,
+  MapPin, ArrowUpRight, FileText, Pencil, Trash2,
   ArrowDownToLine, ArrowUpFromLine,
 } from 'lucide-vue-next'
 import {
   getMaterial, getCategoryParams, listStockLog, listMaterialFiles,
   listCategories, deleteMaterial, imagePublicUrl, openDatasheet,
 } from '../../lib/db'
+import { NO_IMAGE_URL, NO_IMAGE_ONERROR } from '../../lib/noImage'
 import type { Category, MaterialRow, CategoryParam, StockLog, MaterialFile } from '../../lib/types'
 import { filterFieldParams } from '../../lib/paramFields'
-import MaterialFormDialog from '../../components/business/MaterialFormDialog.vue'
+import MaterialFormSheet from '../../components/mobile/MaterialFormSheet.vue'
 import NavBar from '../../components/mobile/NavBar.vue'
 import QuickStockSheet from '../../components/mobile/QuickStockSheet.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
@@ -183,9 +183,10 @@ const toast = useToast()
  * 1. 作为路由页 /m/material/:id（默认，route.params.id 驱动）；
  * 2. 作为只读弹窗被其它页嵌入（传 id + readonly，去掉底部操作，返回关闭弹窗）。
  */
-const props = withDefaults(defineProps<{ id?: string; readonly?: boolean }>(), {
+const props = withDefaults(defineProps<{ id?: string; readonly?: boolean; material?: MaterialRow | null }>(), {
   id: undefined,
   readonly: false,
+  material: null,
 })
 const emit = defineEmits<{ close: [] }>()
 
@@ -356,6 +357,23 @@ async function remove() {
 watch(
   () => props.id ?? (route.name === 'm-material' ? (route.params.id as string) : null),
   (id) => { if (id) load() },
+  { immediate: true },
+)
+
+// 外部直接传入已构造物料（如扫码「新建」项：无 id、未落库）：直接展示，不查询
+watch(
+  () => props.material,
+  async (mat) => {
+    if (mat) {
+      m.value = mat
+      loadError.value = ''
+      // 扩展参数依赖分类模板才能显示中文名，按 category_id 补取（与 load 同口径）
+      catParams.value = []
+      if (mat.category_id) {
+        try { catParams.value = await getCategoryParams(mat.category_id) } catch { catParams.value = [] }
+      }
+    } else if (!props.id) { m.value = null }
+  },
   { immediate: true },
 )
 </script>

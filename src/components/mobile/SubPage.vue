@@ -39,9 +39,9 @@ defineProps<{ title: string; bare?: boolean }>()
   margin-top: 12px;
   display: flex;
   flex-direction: column;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-xl);
+  /* background: var(--c-surface); */
+  /* border: 1px solid var(--c-border); */
+  /* border-radius: var(--r-xl); */
   overflow: hidden;
 }
 

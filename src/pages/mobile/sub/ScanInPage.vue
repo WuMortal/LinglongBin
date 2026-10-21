@@ -1,13 +1,20 @@
 <template>
   <SubPage title="扫码入库(立创)" bare>
-    <!-- 内容区顶部右侧统计：图标 + 数字（不进 header） -->
-    <div class="content-stat">
-      <span class="ts">
-        <Boxes :size="13" style="display: inline-flex; flex-shrink: 0" />共 {{ items.length }}
-      </span>
-      <span class="ts warn">
-        <PackagePlus :size="13" style="display: inline-flex; flex-shrink: 0" />待新建 {{ pendingCount }}
-      </span>
+    <!-- 顶部一行：左侧说明（存在/新增含义）+ 右侧统计 -->
+    <div class="top-bar">
+      <p class="content-hint">
+        <span class="t-exist">存在</span>：仅增加库存
+        <span class="sep">·</span>
+        <span class="t-new">新增</span>：自动新建物料并入库
+      </p>
+      <div class="content-stat">
+        <span class="ts">
+          <Boxes :size="13" style="display: inline-flex; flex-shrink: 0" />共 {{ items.length }}
+        </span>
+        <span class="ts warn">
+          <PackagePlus :size="13" style="display: inline-flex; flex-shrink: 0" />待新建 {{ pendingCount }}
+        </span>
+      </div>
     </div>
 
     <!-- 录入区：手动粘贴（相机在 WebView/桌面可能不可用，手动是可靠路径；相机开关在底部栏） -->
@@ -23,12 +30,10 @@
     <!-- 已扫列表（行卡样式，参考移动端物料库列表模式） -->
     <section v-if="items.length" class="list">
       <article v-for="it in items" :key="it.pc" class="item row-item"
-        :class="{ pending: it.pending, tap: it.material_id }" @click="openDetail(it)">
+        :class="{ pending: it.pending, tap: it.material_id || it.pending }" @click="openDetail(it)">
         <div class="row-thumb">
-          <img v-if="thumbOf(it)" :src="thumbOf(it)" alt="" loading="lazy" />
-          <div v-else class="thumb-ph">
-            <ImageIcon :size="22" style="display: inline-flex; flex-shrink: 0" />
-          </div>
+          <img :src="thumbOf(it) || NO_IMAGE_URL" alt="暂无图片" loading="lazy"
+            :onerror="NO_IMAGE_ONERROR" />
           <span v-if="it.pending" class="low-tag sm">新建</span>
         </div>
         <div class="row-body">
@@ -37,7 +42,7 @@
               {{ it.material?.name || it.pc }}
               <span v-if="it.material?.name" class="row-pn">{{ it.pc }}</span>
             </h3>
-            <span class="status" :class="it.pending ? 'warn' : 'ok'">{{ it.pending ? '新建' : '存在' }}</span>
+            <span class="status" :class="(it.lcscLoading || it.resolving) ? 'loading' : (it.pending ? 'warn' : 'ok')">{{ (it.lcscLoading || it.resolving) ? '查询中…' : (it.pending ? '新建' : '存在') }}</span>
             <span class="row-qty">×{{ it.qty }}</span>
           </div>
           <p class="row-line2">{{ (it.material?.brand || it.pm || '—') }} · {{ it.material?.model || '—' }}</p>
@@ -81,7 +86,7 @@
     <!-- 已存在物料：点击弹出只读详情（复用物料详情页，去掉操作与 NavBar，外层 X 关闭） -->
     <Teleport to="body">
       <Transition name="detail">
-        <div v-if="selId" class="detail-mask" @click="closeDetail">
+        <div v-if="selId || selMat" class="detail-mask" @click="closeDetail">
           <div class="detail-sheet" @click.stop>
             <div class="sheet-head">
               <span class="grab" />
@@ -89,7 +94,7 @@
                 <X :size="18" style="display: inline-flex; flex-shrink: 0" />
               </button>
             </div>
-            <MaterialDetail :id="selId ?? undefined" readonly @close="closeDetail" />
+            <MaterialDetail :id="selId ?? undefined" :material="selMat" readonly @close="closeDetail" />
           </div>
         </div>
       </Transition>
@@ -100,7 +105,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { ScanLine, X, RotateCcw, MapPin, Boxes, PackagePlus, Image as ImageIcon } from 'lucide-vue-next'
+import { ScanLine, X, RotateCcw, MapPin, Boxes, PackagePlus } from 'lucide-vue-next'
 import SubPage from '../../../components/mobile/SubPage.vue'
 import ScanCamera from '../../../components/mobile/ScanCamera.vue'
 import NumberStepper from '../../../components/mobile/NumberStepper.vue'
@@ -109,13 +114,16 @@ import { useToast } from '../../../composables/toast'
 import { confirm } from '../../../composables/confirm'
 import {
   matchMaterialsByKeys, createMaterial, createMaterialFiles, stockInOrder, listCategories,
-  imagePublicUrl,
+  getCategoryParams, imagePublicUrl,
 } from '../../../lib/db'
 import {
-  lcscLookup, lcscFetchImage, lcscFileSeeds,
+  lcscLookup, lcscSearch,
   type LcscComponent,
 } from '../../../lib/lcscApi'
-import { ensureLcscCategory } from '../../../lib/lcscDraft'
+import {
+  ensureLcscCategory, matchLcscCategory, fillParamsFromLcsc, buildDraftFromLcsc,
+} from '../../../lib/lcscDraft'
+import { NO_IMAGE_URL, NO_IMAGE_ONERROR } from '../../../lib/noImage'
 import type { MaterialRow, Category } from '../../../lib/types'
 import type { StockOrderItem } from '@/lib/storage/types'
 
@@ -134,6 +142,10 @@ interface ScanItem {
   material?: MaterialRow
   /** 立创商城查得的预览/创建数据：待新建项用于列表展示，并复用到入库建料 */
   lcsc?: LcscComponent
+  /** 单价（立创详情不含价格，单独从搜索结果取最低阶梯价），预览/入库展示复用 */
+  price?: number | null
+  /** 数据库匹配阶段（查物料是否已存在，可能因网络慢）：期间显示「查询中」 */
+  resolving?: boolean
   lcscLoading?: boolean
   lcscErr?: boolean
 }
@@ -180,7 +192,7 @@ async function addItems(text: string) {
     if (!isLcscCode(p.pc)) { skipped++; continue }
     const exist = items.value.find(i => i.pc === p.pc)
     if (exist) { exist.qty += p.qty; added++ }
-    else items.value.push({ ...p, material_id: null, materialName: '', pending: false })
+    else items.value.push({ ...p, material_id: null, materialName: '', pending: false, resolving: true })
   }
   if (!added && !items.value.length) {
     toast.error(skipped ? '未识别到有效立创物料编号（应为 C+数字，如 C50313803）' : '没有解析出有效物料编号(pc)')
@@ -225,6 +237,9 @@ async function resolveMatches() {
   } catch {
     // 匹配失败不阻塞：统一先标待新建，确认时再按立创查（查不到也能用最小信息建料）
     for (const it of items.value) { it.material_id = null; it.pending = true }
+  } finally {
+    // 数据库匹配结束：清除查询中标志（无论成功/失败），立创查询另行用 lcscLoading 标记
+    for (const it of items.value) it.resolving = false
   }
   // 待新建项：异步拉立创商城数据做列表预览（不阻塞录入）
   void enrichLcsc()
@@ -245,7 +260,7 @@ function lcscPreview(c: LcscComponent): MaterialRow {
     price: 0,
     remark: null,
     categories: c.category ? ({ name: c.category } as any) : undefined,
-  } as MaterialRow
+  } as unknown as MaterialRow
 }
 
 /**
@@ -261,6 +276,12 @@ async function enrichLcsc() {
       const c = await lcscLookup(it.pc)
       it.lcsc = c
       it.material = lcscPreview(c)
+      // 单价：立创详情(lcsc)不含价格，从搜索结果取最低阶梯价（与导入入库口径一致）
+      try {
+        const hits = await lcscSearch(it.pc)
+        const hit = hits.find(h => h.part_no && h.part_no.toUpperCase() === it.pc.toUpperCase())
+        if (hit?.price != null) it.price = hit.price
+      } catch { /* 价格缺失不影响建料/预览 */ }
     } catch {
       it.lcscErr = true
     } finally {
@@ -280,12 +301,68 @@ function thumbOf(it: ScanItem): string | undefined {
   return p ? imagePublicUrl(p) : undefined
 }
 
-/** 点击已存在物料 → 弹出只读详情（复用 MaterialDetail） */
+/** 点击列表行 → 弹出只读详情（复用 MaterialDetail）
+ *  - 已存在：按 material_id 查库后展示；
+ *  - 新建（待入库）：用扫码/立创数据构造一个临时 MaterialRow 直接展示，不落库。 */
 const selId = ref<string | null>(null)
-function openDetail(it: ScanItem) {
-  if (it.material_id) selId.value = it.material_id
+const selMat = ref<MaterialRow | null>(null)
+async function openDetail(it: ScanItem) {
+  if (it.material_id) {
+    selMat.value = null
+    selId.value = it.material_id
+    return
+  }
+  selId.value = null
+  // 先以基础字段立刻弹出预览，再异步补全分类与扩展参数（与导入入库的立创处理一致）
+  const base = buildPreviewMaterial(it)
+  selMat.value = base
+  if (!it.lcsc) return
+  try {
+    const cats = await listCategories()
+    const { minor } = matchLcscCategory(it.lcsc, cats)
+    let category_id: string | null = null
+    let categories: MaterialRow['categories'] = base.categories
+    let params: Record<string, unknown> = {}
+    if (minor) {
+      category_id = minor
+      const cat = cats.find(c => c.id === minor)
+      if (cat) categories = { name: cat.name, threshold: cat.threshold ?? null }
+      const tpl = await getCategoryParams(minor)
+      if (tpl.length) params = fillParamsFromLcsc(it.lcsc, tpl)
+    }
+    selMat.value = { ...base, category_id, categories, params }
+  } catch {
+    // 分类/参数缺失不影响预览（基础字段已展示）
+  }
 }
-function closeDetail() { selId.value = null }
+function closeDetail() { selId.value = null; selMat.value = null }
+
+/** 用扫到的字段（优先立创预览数据）构造一个只读展示用的物料对象 */
+function buildPreviewMaterial(it: ScanItem): MaterialRow {
+  const l = it.lcsc
+  return {
+    id: it.pc, // 无真实 id，用 pc 占位（只读、不写库）
+    owner: '',
+    category_id: null,
+    name: l?.name || l?.model || it.pm || it.pc,
+    model: l?.model || it.pm || null,
+    brand: l?.brand || null,
+    package: l?.package || null,
+    part_no: it.pc,
+    threshold: 0,
+    params: {},
+    qty: it.qty,
+    location: null,
+    price: it.price ?? 0,
+    image_path: l?.image_url || null, // 立创外链，imagePublicUrl 会透传
+    datasheet_path: null,
+    link: l?.source_url || null,
+    remark: it.pending ? '本次将新增该物料' : null,
+    alternates: [],
+    created_at: new Date().toISOString(),
+    categories: l?.category ? { name: l.category, threshold: null } : null,
+  }
+}
 
 // 弹窗打开时锁背景滚动（与 ConfirmDialog 一致，避免遮罩上滑动带动底层列表）
 watch(selId, v => { document.body.style.overflow = v ? 'hidden' : '' })
@@ -325,21 +402,27 @@ async function confirmIn() {
         let created: MaterialRow
         if (lcsc) {
           const { major, minor } = await ensureLcscCategory(lcsc, cats)
-          let image_path: string | null = null
-          if (lcsc.image_url) { try { image_path = await lcscFetchImage(lcsc.image_url) } catch { /* 图片缺失不影响 */ } }
+          // 与 PC 导入入库同一条建料链路：参数按分类模板回填、图片存立创远程链接
+          // （不下载落地，外链可直接展示）、数据手册/链接/附件一并带出
+          const draft = await buildDraftFromLcsc(lcsc, cats, { price: it.price ?? undefined })
           created = await createMaterial({
-            name: lcsc.name || it.pm || it.pc,
-            model: lcsc.model || it.pm || null,
-            brand: lcsc.brand || null,
-            package: lcsc.package || null,
-            part_no: it.pc,
-            category_id: minor ?? major ?? null,
-            threshold: 0,
-            price: 0,
-            image_path,
+            name: draft.name || it.pm || it.pc,
+            model: draft.model || it.pm || null,
+            brand: draft.brand || null,
+            package: draft.package || null,
+            part_no: draft.part_no || it.pc,
+            category_id: draft.category_id ?? minor ?? major ?? null,
+            params: draft.params,
+            location: draft.location,
+            threshold: draft.threshold ?? 0,
+            price: it.price ?? draft.price ?? 0,
+            image_path: draft.image_path,
+            datasheet_path: draft.datasheet_path,
+            link: draft.link,
             remark: it.on ? `立创订单 ${it.on}` : null,
+            qty: 0, // 数量由入库单累加，不直接写主表
           })
-          if (lcsc.files?.length) await createMaterialFiles(created.id, lcscFileSeeds(lcsc.files)).catch(() => { })
+          if (draft.files?.length) await createMaterialFiles(created.id, draft.files).catch(() => { })
         } else {
           created = await createMaterial({
             name: it.pm || it.pc,
@@ -486,14 +569,6 @@ function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
   object-fit: cover;
 }
 
-.thumb-ph {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--c-text-3);
-}
-
 .low-tag.sm {
   position: absolute;
   top: 4px;
@@ -598,6 +673,11 @@ function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
   color: #d99000;
 }
 
+.status.loading {
+  background: var(--c-glass-strong);
+  color: var(--c-text-2);
+}
+
 .loc {
   display: inline-flex;
   align-items: center;
@@ -688,14 +768,38 @@ function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
   border-color: var(--c-danger);
 }
 
-/* 内容区顶部右侧统计：图标 + 数字，不进 header */
+/* 顶部一行：左说明 + 右统计 */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 10px 0;
+}
+
+/* 内容区顶部右侧统计：图标 + 数字 */
 .content-stat {
   display: flex;
-  justify-content: flex-end;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px 0;
+  flex-shrink: 0;
 }
+
+/* 顶部说明：解释「存在 / 新增」含义 */
+.content-hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--c-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.content-hint .sep { margin: 0 4px; opacity: 0.6; }
+.content-hint .t-exist { color: var(--c-primary); font-weight: 600; }
+.content-hint .t-new { color: #d99000; font-weight: 600; }
 
 .ts {
   display: inline-flex;

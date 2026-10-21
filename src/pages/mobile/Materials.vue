@@ -51,10 +51,8 @@
         <div v-if="viewMode === 'grid'" class="grid">
           <article v-for="it in items" :key="it.id" class="item grid-item" @click="openDetail(it)">
             <div class="thumb">
-              <img v-if="imagePublicUrl(it.image_path)" :src="imagePublicUrl(it.image_path)" alt="" loading="lazy" />
-              <div v-else class="thumb-ph">
-                <ImageIcon :size="24" style="display: inline-flex; flex-shrink: 0" />
-              </div>
+              <img :src="imagePublicUrl(it.image_path) || NO_IMAGE_URL" alt="暂无图片" loading="lazy"
+                :onerror="NO_IMAGE_ONERROR" />
               <span v-if="isLow(it)" class="low-tag">低库存</span>
             </div>
             <div class="body">
@@ -85,10 +83,8 @@
         <div v-else class="list">
           <article v-for="it in items" :key="it.id" class="item row-item" @click="openDetail(it)">
             <div class="row-thumb">
-              <img v-if="imagePublicUrl(it.image_path)" :src="imagePublicUrl(it.image_path)" alt="" loading="lazy" />
-              <div v-else class="thumb-ph">
-                <ImageIcon :size="22" style="display: inline-flex; flex-shrink: 0" />
-              </div>
+              <img :src="imagePublicUrl(it.image_path) || NO_IMAGE_URL" alt="暂无图片" loading="lazy"
+                :onerror="NO_IMAGE_ONERROR" />
               <span v-if="isLow(it)" class="low-tag sm">低库存</span>
             </div>
             <div class="row-body">
@@ -131,8 +127,8 @@
       <Plus :size="22" style="display: inline-flex; flex-shrink: 0" />
     </button>
 
-    <!-- 新增物料表单（复用桌面弹窗；编辑在详情页） -->
-    <MaterialFormDialog v-model="showAdd" :categories="categories" :material="null" @saved="onSaved" />
+    <!-- 新增物料表单（移动端底部弹层；编辑在详情页） -->
+    <MaterialFormSheet v-model="showAdd" :categories="categories" :material="null" @saved="onSaved" />
 
     <!-- 筛选面板（库位 → 大类 → 小类 → 扩展参数） -->
     <MaterialFilterPanel :open="panelOpen" :tree="tree"
@@ -145,17 +141,18 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import PullRefresh from '../../components/mobile/PullRefresh.vue'
-import { Search, Plus, Box, Image as ImageIcon, X, SlidersHorizontal, Grid3x3, List, MapPin } from 'lucide-vue-next'
+import { Search, Plus, Box, X, SlidersHorizontal, Grid3x3, List, MapPin } from 'lucide-vue-next'
 import {
   listMaterials, countMaterials, listCategories,
   imagePublicUrl, buildCategoryTree, descendantCategoryIds, getCategoryParams,
 } from '../../lib/db'
+import { NO_IMAGE_URL, NO_IMAGE_ONERROR } from '../../lib/noImage'
 import { filterFieldParams } from '../../lib/paramFields'
 import type { Category, MaterialRow, CategoryParam } from '../../lib/types'
 import type { CategoryNode } from '../../lib/db'
 import type { ListMaterialsOpts } from '../../lib/storage'
 import { withAuthRetry } from '../../lib/authRetry'
-import MaterialFormDialog from '../../components/business/MaterialFormDialog.vue'
+import MaterialFormSheet from '../../components/mobile/MaterialFormSheet.vue'
 import MaterialFilterPanel from '../../components/mobile/MaterialFilterPanel.vue'
 import { useToast } from '../../composables/toast'
 
@@ -836,13 +833,6 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 
-.thumb-ph {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--c-text-3);
-}
 
 /* 低库存角标（缩略图左上角） */
 .low-tag {
