@@ -1,71 +1,115 @@
 <template>
-  <SubPage title="扫码入库(立创)">
-    <div class="scan-page">
-      <!-- 录入区：扫码相机 + 手动粘贴（相机在 WebView/桌面可能不可用，手动是可靠路径） -->
-      <section class="card in-card">
-        <button class="scan-btn" :class="{ on: cameraOn }" @click="toggleCamera">
-          <ScanLine :size="18" style="display: inline-flex; flex-shrink: 0" />
-          {{ cameraOn ? '关闭相机' : '扫码' }}
-        </button>
-        <textarea v-model="rawInput" class="raw" rows="3"
-          placeholder="粘贴扫码内容（可多行，每行一条）：{on:SO..,pc:C50313803,pm:AMS1117-3.3OE,qty:20,...}" />
-        <button class="add-btn" @click="addFromText">添加</button>
-      </section>
+  <SubPage title="扫码入库(立创)" bare>
+    <!-- 内容区顶部右侧统计：图标 + 数字（不进 header） -->
+    <div class="content-stat">
+      <span class="ts">
+        <Boxes :size="13" style="display: inline-flex; flex-shrink: 0" />共 {{ items.length }}
+      </span>
+      <span class="ts warn">
+        <PackagePlus :size="13" style="display: inline-flex; flex-shrink: 0" />待新建 {{ pendingCount }}
+      </span>
+    </div>
 
-      <!-- 相机预览（条件渲染，元素存在后才会初始化扫码器） -->
-      <section v-if="cameraOn" class="cam-wrap">
-        <div id="scan-reader" class="cam" />
-        <p class="cam-tip">将立创物料条码对准取景框，可连续扫码</p>
-      </section>
+    <!-- 录入区：手动粘贴（相机在 WebView/桌面可能不可用，手动是可靠路径；相机开关在底部栏） -->
+    <section class="in-card">
+      <textarea v-model="rawInput" class="raw" rows="3"
+        placeholder="粘贴扫码内容（可多行，每行一条；立创码为 C+数字，如 C50313803）：{on:SO..,pc:C50313803,pm:AMS1117-3.3OE,qty:20,...}" />
+      <button class="add-btn" @click="addFromText">添加</button>
+    </section>
 
-      <!-- 已扫列表 -->
-      <section v-if="items.length" class="list">
-        <article v-for="it in items" :key="it.pc" class="item" :class="{ pending: it.pending }">
-          <div class="i-top">
-            <span class="pc">{{ it.pc }}</span>
-            <button class="rm" title="移除" @click="remove(it.pc)">
-              <X :size="14" style="display: inline-flex; flex-shrink: 0" />
-            </button>
+    <!-- 全屏扫码组件（点击底部「扫码」打开，参考微信扫码页） -->
+    <ScanCamera v-if="cameraOn" @detected="onScan" @close="cameraOn = false" @error="onScanError" />
+
+    <!-- 已扫列表（行卡样式，参考移动端物料库列表模式） -->
+    <section v-if="items.length" class="list">
+      <article v-for="it in items" :key="it.pc" class="item row-item"
+        :class="{ pending: it.pending, tap: it.material_id }" @click="openDetail(it)">
+        <div class="row-thumb">
+          <img v-if="thumbOf(it)" :src="thumbOf(it)" alt="" loading="lazy" />
+          <div v-else class="thumb-ph">
+            <ImageIcon :size="22" style="display: inline-flex; flex-shrink: 0" />
           </div>
-          <p class="pm">{{ it.pm || '（无型号）' }}</p>
-          <div class="i-bottom">
-            <label class="qty">
-              <span>数量</span>
-              <input v-model.number="it.qty" type="number" min="1" inputmode="numeric" />
-            </label>
-            <span class="tag" :class="it.pending ? 'warn' : 'ok'">
-              {{ it.pending ? '待新建' : '已存在' }}
+          <span v-if="it.pending" class="low-tag sm">新建</span>
+        </div>
+        <div class="row-body">
+          <div class="row-head">
+            <h3 class="row-name">
+              {{ it.material?.name || it.pc }}
+              <span v-if="it.material?.name" class="row-pn">{{ it.pc }}</span>
+            </h3>
+            <span class="status" :class="it.pending ? 'warn' : 'ok'">{{ it.pending ? '新建' : '存在' }}</span>
+            <span class="row-qty">×{{ it.qty }}</span>
+          </div>
+          <p class="row-line2">{{ (it.material?.brand || it.pm || '—') }} · {{ it.material?.model || '—' }}</p>
+          <div v-if="it.material?.categories?.name || it.material?.package || it.material?.location" class="row-tags">
+            <span v-if="it.material.categories?.name" class="row-tag">{{ it.material.categories.name }}</span>
+            <span v-if="it.material.package" class="row-tag">{{ it.material.package }}</span>
+            <span v-if="it.material?.location" class="loc">
+              <MapPin :size="12" style="display: inline-flex; flex-shrink: 0" />{{ it.material.location }}
             </span>
           </div>
-          <p v-if="!it.pending" class="mname">{{ it.materialName }}</p>
-        </article>
-      </section>
+        </div>
+        <div class="row-side">
+          <button class="rm" title="移除" @click.stop="remove(it.pc)">
+            <X :size="14" style="display: inline-flex; flex-shrink: 0" />
+          </button>
+          <NumberStepper v-model="it.qty" :min="1" @click.stop />
+        </div>
+      </article>
+    </section>
 
-      <p v-else class="empty">
-        <ScanLine :size="26" style="display: inline-flex; flex-shrink: 0" />
-        <span>还没有扫码记录，扫码或粘贴内容后点「添加」</span>
-      </p>
+    <p v-else class="empty">
+      <ScanLine :size="26" style="display: inline-flex; flex-shrink: 0" />
+      <span>还没有扫码记录，点底部「扫码」</span>
+    </p>
 
-      <!-- 底部确认（始终可见，非 fixed，避免页面过渡 transform 跳动） -->
-      <div class="footbar">
-        <span class="sum">共 {{ items.length }} 项 · 待新建 {{ pendingCount }}</span>
-        <button class="submit" :disabled="!items.length || busy" @click="confirmIn">
-          <span v-if="busy" class="spinner-sm" />
-          {{ busy ? '入库中…' : '确认入库' }}
-        </button>
-      </div>
+    <!-- 底部固定操作栏：最左重置 + 扫码 + 确认入库（参考物料详情 actbar） -->
+    <div class="actbar">
+      <button class="ibtn" title="重置" @click="resetAll">
+        <RotateCcw :size="19" style="display: inline-flex; flex-shrink: 0" />
+      </button>
+      <button class="abtn scan" @click="cameraOn = true">
+        <ScanLine :size="17" style="display: inline-flex; flex-shrink: 0" />
+        扫码
+      </button>
+      <button class="abtn in" :disabled="!items.length || busy" @click="confirmIn">
+        <span v-if="busy" class="spinner-sm" />
+        {{ busy ? '入库中…' : '确认入库' }}
+      </button>
     </div>
+
+    <!-- 已存在物料：点击弹出只读详情（复用物料详情页，去掉操作与 NavBar，外层 X 关闭） -->
+    <Teleport to="body">
+      <Transition name="detail">
+        <div v-if="selId" class="detail-mask" @click="closeDetail">
+          <div class="detail-sheet" @click.stop>
+            <div class="sheet-head">
+              <span class="grab" />
+              <button class="sheet-x" type="button" @click="closeDetail">
+                <X :size="18" style="display: inline-flex; flex-shrink: 0" />
+              </button>
+            </div>
+            <MaterialDetail :id="selId ?? undefined" readonly @close="closeDetail" />
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </SubPage>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { ScanLine, X } from 'lucide-vue-next'
+import { ScanLine, X, RotateCcw, MapPin, Boxes, PackagePlus, Image as ImageIcon } from 'lucide-vue-next'
 import SubPage from '../../../components/mobile/SubPage.vue'
+import ScanCamera from '../../../components/mobile/ScanCamera.vue'
+import NumberStepper from '../../../components/mobile/NumberStepper.vue'
+import MaterialDetail from '../MaterialDetail.vue'
 import { useToast } from '../../../composables/toast'
+import { confirm } from '../../../composables/confirm'
 import {
   matchMaterialsByKeys, createMaterial, createMaterialFiles, stockInOrder, listCategories,
+  imagePublicUrl,
 } from '../../../lib/db'
 import {
   lcscLookup, lcscFetchImage, lcscFileSeeds,
@@ -86,6 +130,12 @@ interface ScanItem {
   material_id: string | null
   materialName: string
   pending: boolean
+  /** 匹配的既有物料整行（用于列表行卡展示缩略图/分类/库存等，参考物料库列表） */
+  material?: MaterialRow
+  /** 立创商城查得的预览/创建数据：待新建项用于列表展示，并复用到入库建料 */
+  lcsc?: LcscComponent
+  lcscLoading?: boolean
+  lcscErr?: boolean
 }
 
 const rawInput = ref('')
@@ -113,19 +163,30 @@ function parseCode(raw: string): { pc: string; pm: string; on: string; qty: numb
   return { pc, pm: map.pm || '', on: map.on || '', qty: Number.isFinite(qty) && qty > 0 ? qty : 1 }
 }
 
-/** 批量添加（粘贴多行 / 一次多码）：按 pc 合并，已存在则累加数量 */
+/** 立创物料编号：C + 纯数字（如 C50313803），用来区分其它平台的条码 */
+function isLcscCode(pc: string): boolean {
+  return /^C\d+$/.test(pc)
+}
+
+/** 批量添加（粘贴多行 / 一次多码）：按 pc 合并，已存在则累加数量；非立创码报错跳过 */
 async function addItems(text: string) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
   if (!lines.length) return
   let added = 0
+  let skipped = 0
   for (const line of lines) {
     const p = parseCode(line)
-    if (!p) continue
+    if (!p) { skipped++; continue }
+    if (!isLcscCode(p.pc)) { skipped++; continue }
     const exist = items.value.find(i => i.pc === p.pc)
     if (exist) { exist.qty += p.qty; added++ }
     else items.value.push({ ...p, material_id: null, materialName: '', pending: false })
   }
-  if (!added && !items.value.length) { toast.error('没有解析出有效物料编号(pc)'); return }
+  if (!added && !items.value.length) {
+    toast.error(skipped ? '未识别到有效立创物料编号（应为 C+数字，如 C50313803）' : '没有解析出有效物料编号(pc)')
+    return
+  }
+  if (skipped) toast.warning(`已跳过 ${skipped} 条非立创码`)
   rawInput.value = ''
   await resolveMatches()
 }
@@ -152,10 +213,12 @@ async function resolveMatches() {
       if (hit) {
         it.material_id = hit.id
         it.materialName = hit.name
+        it.material = hit
         it.pending = false
       } else {
         it.material_id = null
         it.materialName = ''
+        it.material = undefined
         it.pending = true
       }
     }
@@ -163,10 +226,77 @@ async function resolveMatches() {
     // 匹配失败不阻塞：统一先标待新建，确认时再按立创查（查不到也能用最小信息建料）
     for (const it of items.value) { it.material_id = null; it.pending = true }
   }
+  // 待新建项：异步拉立创商城数据做列表预览（不阻塞录入）
+  void enrichLcsc()
+}
+
+/** 立创数据转列表预览行（仅取展示字段；不含本地 id/库存等） */
+function lcscPreview(c: LcscComponent): MaterialRow {
+  return {
+    id: '',
+    name: c.name,
+    model: c.model,
+    brand: c.brand,
+    package: c.package,
+    part_no: c.part_no,
+    image_path: null,
+    location: undefined,
+    threshold: 0,
+    price: 0,
+    remark: null,
+    categories: c.category ? ({ name: c.category } as any) : undefined,
+  } as MaterialRow
+}
+
+/**
+ * 待新建项：按 pc 拉立创商城数据（复用 PC「导入立创」同一接口 lcscLookup，带缓存），
+ * 填到 item 上做列表预览，并缓存供入库建料复用；失败标 lcscErr 走降级最小建料。
+ */
+async function enrichLcsc() {
+  const targets = items.value.filter(i => i.pending && !i.lcsc && !i.lcscErr && !i.lcscLoading)
+  if (!targets.length) return
+  await Promise.allSettled(targets.map(async it => {
+    it.lcscLoading = true
+    try {
+      const c = await lcscLookup(it.pc)
+      it.lcsc = c
+      it.material = lcscPreview(c)
+    } catch {
+      it.lcscErr = true
+    } finally {
+      it.lcscLoading = false
+    }
+  }))
 }
 
 function remove(pc: string) {
   items.value = items.value.filter(i => i.pc !== pc)
+}
+
+/** 行卡缩略图：待新建项用立创远程图，既有物料用本地图 */
+function thumbOf(it: ScanItem): string | undefined {
+  if (it.lcsc?.image_url) return it.lcsc.image_url
+  const p = it.material?.image_path
+  return p ? imagePublicUrl(p) : undefined
+}
+
+/** 点击已存在物料 → 弹出只读详情（复用 MaterialDetail） */
+const selId = ref<string | null>(null)
+function openDetail(it: ScanItem) {
+  if (it.material_id) selId.value = it.material_id
+}
+function closeDetail() { selId.value = null }
+
+// 弹窗打开时锁背景滚动（与 ConfirmDialog 一致，避免遮罩上滑动带动底层列表）
+watch(selId, v => { document.body.style.overflow = v ? 'hidden' : '' })
+onBeforeUnmount(() => { document.body.style.overflow = '' })
+
+/** 重置：清空全部已扫记录（二次确认，避免误触清掉一整批） */
+async function resetAll() {
+  if (!items.value.length) return
+  if (!await confirm({ title: '重置扫码', content: '确定清空当前所有已扫物料？', danger: true, confirmText: '清空' })) return
+  items.value = []
+  rawInput.value = ''
 }
 
 /**
@@ -189,9 +319,9 @@ async function confirmIn() {
     for (const it of items.value) {
       let mid = byPc.get(norm(it.pc))?.id ?? null
       if (!mid) {
-        // 待新建：查立创补全，失败降级为最小信息建料
-        let lcsc: LcscComponent | null = null
-        try { lcsc = await lcscLookup(it.pc) } catch { /* 无网络/未收录，降级 */ }
+        // 待新建：复用列表已拉取的立创数据（it.lcsc），无则按 pc 再查；失败降级为最小信息建料
+        let lcsc: LcscComponent | null = it.lcsc ?? null
+        if (!lcsc) { try { lcsc = await lcscLookup(it.pc) } catch { /* 无网络/未收录，降级 */ } }
         let created: MaterialRow
         if (lcsc) {
           const { major, minor } = await ensureLcscCategory(lcsc, cats)
@@ -209,7 +339,7 @@ async function confirmIn() {
             image_path,
             remark: it.on ? `立创订单 ${it.on}` : null,
           })
-          if (lcsc.files?.length) await createMaterialFiles(created.id, lcscFileSeeds(lcsc.files)).catch(() => {})
+          if (lcsc.files?.length) await createMaterialFiles(created.id, lcscFileSeeds(lcsc.files)).catch(() => { })
         } else {
           created = await createMaterial({
             name: it.pm || it.pc,
@@ -241,39 +371,10 @@ async function confirmIn() {
   }
 }
 
-/* ===== 相机扫码（html5-qrcode，按需动态加载；无相机/无权限时优雅降级） ===== */
+/* ===== 相机扫码：抽成全屏组件 ScanCamera（参考微信扫码页） ===== */
 const cameraOn = ref(false)
-// eslint 风格：html5-qrcode 动态加载，运行期对象用 any 避免其类型与调用点摩擦
-let scanner: any = null
-
-async function toggleCamera() {
-  if (cameraOn.value) { await stopCamera(); return }
-  try {
-    const mod: any = await import('html5-qrcode')
-    const Html5Qrcode = mod.Html5Qrcode
-    cameraOn.value = true
-    await nextTick()
-    scanner = new Html5Qrcode('scan-reader')
-    await scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 240, height: 240 } },
-      (decoded: string) => { void addItems(decoded) },
-      () => { /* 每帧未识别，忽略 */ },
-    )
-  } catch {
-    cameraOn.value = false
-    scanner = null
-    toast.error('无法启动相机，请手动粘贴内容')
-  }
-}
-
-async function stopCamera() {
-  try { if (scanner) { await scanner.stop(); await scanner.clear() } } catch { /* 忽略 */ }
-  scanner = null
-  cameraOn.value = false
-}
-
-onBeforeUnmount(stopCamera)
+function onScan(code: string) { void addItems(code) }
+function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
 </script>
 
 <style scoped>
@@ -283,42 +384,16 @@ onBeforeUnmount(stopCamera)
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px 14px;
+  /* 底部固定操作栏占位（重置 + 扫码 + 确认入库） */
+  padding: 12px 14px calc(76px + env(safe-area-inset-bottom));
 }
 
-.card {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
-  padding: 12px;
-}
-
-/* ===== 录入区 ===== */
+/* ===== 录入区（无卡片背景，输入框自身带浅色底） ===== */
 .in-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-
-.scan-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  align-self: flex-start;
-  height: 38px;
-  padding: 0 16px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
-  background: var(--c-bg-2);
-  color: var(--c-text);
-  font-family: inherit;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.scan-btn.on { color: var(--c-primary); border-color: var(--c-primary); }
 
 .raw {
   width: 100%;
@@ -332,7 +407,11 @@ onBeforeUnmount(stopCamera)
   padding: 10px;
   line-height: 1.5;
 }
-.raw:focus { outline: none; border-color: var(--c-primary); }
+
+.raw:focus {
+  outline: none;
+  border-color: var(--c-primary);
+}
 
 .add-btn {
   align-self: flex-end;
@@ -348,54 +427,199 @@ onBeforeUnmount(stopCamera)
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.add-btn:active { transform: scale(0.97); }
 
-/* ===== 相机 ===== */
-.cam-wrap { display: flex; flex-direction: column; gap: 6px; }
-.cam {
-  width: 100%;
-  height: 240px;
-  border-radius: var(--r-lg);
-  overflow: hidden;
-  background: #000;
-}
-.cam-tip {
-  margin: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-3);
-  text-align: center;
+.add-btn:active {
+  transform: scale(0.97);
 }
 
-/* ===== 列表 ===== */
+/* ===== 列表（行卡，参考移动端物料库列表模式） ===== */
 .list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
 }
 
-.item {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
-  padding: 10px 12px;
-}
-.item.pending { border-color: rgba(255, 178, 0, 0.45); }
-
-.i-top {
+/* 与物料库列表同一套：行式布局、点击反馈、底部 hairline 分隔 */
+.item.row-item {
   display: flex;
-  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--c-border-hairline);
+  background: transparent;
+  cursor: default;
+}
+
+.item.row-item.tap {
+  cursor: pointer;
+}
+
+.item.row-item:last-child {
+  border-bottom: none;
+}
+
+.item.row-item:active.tap {
+  transform: scale(0.99);
+}
+
+/* 点在数量步进器/移除按钮等内部控件时，不要触发整行按压缩放 */
+.item.row-item:active.tap:has(.stepper:active, .rm:active) {
+  transform: none;
+}
+
+/* 缩略图（沿用物料库尺寸语言） */
+.row-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 65px;
+  height: 65px;
+  border-radius: var(--r-md);
+  background: var(--c-glass);
+  overflow: hidden;
+}
+
+.row-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--c-text-3);
+}
+
+.low-tag.sm {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--c-warning);
+  color: #1a1205;
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row-head {
+  display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
 }
-.pc {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-md);
-  font-weight: 700;
-  color: var(--c-text);
+
+.row-name {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
 }
+
+.row-name .row-pn {
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
+.row-qty {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-line2 {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.row-tag {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--c-bg-2);
+  color: var(--c-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.status {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.status.ok {
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
+}
+
+.status.warn {
+  background: rgba(255, 178, 0, 0.16);
+  color: #d99000;
+}
+
+.loc {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* 右侧：移除 + 数量编辑 */
+.row-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .rm {
   width: 26px;
   height: 26px;
@@ -408,55 +632,9 @@ onBeforeUnmount(stopCamera)
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.pm {
-  margin: 4px 0 8px;
-  font-size: var(--fs-sm);
-  color: var(--c-text-2);
-}
 
-.i-bottom {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.qty {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-xs);
-  color: var(--c-text-3);
-}
-.qty input {
-  width: 72px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
-  background: var(--c-bg-2);
-  color: var(--c-text);
-  font-family: inherit;
-  font-size: var(--fs-md);
-  font-variant-numeric: tabular-nums;
-}
-.qty input:focus { outline: none; border-color: var(--c-primary); }
-
-.tag {
-  margin-left: auto;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-.tag.ok { background: var(--c-primary-soft); color: var(--c-primary); }
-.tag.warn { background: rgba(255, 178, 0, 0.16); color: #d99000; }
-
-.mname {
-  margin: 8px 0 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.rm:active {
+  color: var(--c-danger);
 }
 
 .empty {
@@ -471,38 +649,217 @@ onBeforeUnmount(stopCamera)
   text-align: center;
 }
 
-/* ===== 底部确认 ===== */
-.footbar {
+/* ===== 底部固定操作栏（参考物料详情 actbar） ===== */
+.actbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-top: 4px;
+  gap: 8px;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  background: var(--c-glass-strong);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid var(--c-border);
+  box-shadow: var(--shadow-lg);
 }
-.sum {
-  font-size: var(--fs-xs);
+
+/* 最左侧重置图标 */
+.ibtn {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
   color: var(--c-text-2);
-  flex: 1;
-  min-width: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
-.submit {
-  flex: 0 0 auto;
+
+.ibtn:active {
+  color: var(--c-danger);
+  border-color: var(--c-danger);
+}
+
+/* 内容区顶部右侧统计：图标 + 数字，不进 header */
+.content-stat {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 0;
+}
+
+.ts {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-2);
+  white-space: nowrap;
+}
+
+.ts svg {
+  color: var(--c-text-3);
+}
+
+.ts.warn {
+  color: #d99000;
+}
+
+.ts.warn svg {
+  color: #d99000;
+}
+
+.abtn {
+  flex: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 22px;
+  gap: 6px;
+  height: 42px;
   border: none;
-  border-radius: var(--r-lg);
-  background: var(--c-primary);
-  color: #fff;
+  border-radius: var(--r-md);
   font-family: inherit;
   font-size: var(--fs-md);
   font-weight: 700;
+  color: #fff;
   cursor: pointer;
+  transition: transform 120ms ease-out, opacity var(--motion-fast);
   -webkit-tap-highlight-color: transparent;
 }
-.submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.abtn.scan {
+  background: var(--c-bg-2);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.abtn.scan.on {
+  color: var(--c-primary);
+  border-color: var(--c-primary);
+}
+
+.abtn.in {
+  flex: 1.8 1 0;
+  background: var(--c-primary);
+}
+
+.abtn:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
+.abtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 只读详情弹窗（复用物料详情页，风格对齐 ConfirmDialog 移动端 sheet） ===== */
+.detail-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+}
+
+.detail-sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-elevated);
+  border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  border-top: 1px solid var(--c-border-hairline);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  padding: 0px 6px;
+}
+
+/* 顶部把手 + 右上角关闭 X（对齐 ConfirmDialog 视觉语言） */
+.sheet-head {
+  position: relative;
+  flex-shrink: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.grab {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--c-border-strong);
+}
+
+.sheet-x {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--c-text-3);
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.sheet-x:active {
+  background: var(--c-glass);
+  color: var(--c-text);
+}
+
+/* 弹窗内物料详情整页占满 sheet 并可滚动 */
+.detail-sheet :deep(.mpage) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 过渡：遮罩淡入 + 底部上滑（与 ConfirmDialog 同套） */
+.detail-enter-active,
+.detail-leave-active {
+  transition: opacity 200ms ease;
+}
+
+.detail-enter-active .detail-sheet,
+.detail-leave-active .detail-sheet {
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.detail-enter-from,
+.detail-leave-to {
+  opacity: 0;
+}
+
+.detail-enter-from .detail-sheet,
+.detail-leave-to .detail-sheet {
+  transform: translateY(100%);
+}
 
 .spinner-sm {
   width: 15px;
@@ -512,5 +869,10 @@ onBeforeUnmount(stopCamera)
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg) } }
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg)
+  }
+}
 </style>

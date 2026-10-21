@@ -731,6 +731,18 @@ function normKey(v?: string | null): string {
 }
 
 /**
+ * 待创建物料的去重键：同批导入里「商品编号」相同的行应落到同一个物料，
+ * 避免重复建料（入库单则保留多条明细）。
+ * 优先用商品编号（待创建草稿里可能改过，故优先取草稿值），缺编号回退型号；
+ * buildImpRows 已保证型号非空，故去重键恒有值。
+ */
+function impDedupKey(r: ImpRow): string {
+  const partNo = r.pending?.part_no ?? r.partNo
+  const model = r.pending?.model ?? r.model
+  return normKey(partNo) || normKey(model)
+}
+
+/**
  * 行的匹配/搜索主键：立创方案用商品编号（订单里的编号即立创编码，查立创 / 挑选弹窗直达），
  * 其余方案仍用型号；立创方案缺编号时回退型号，避免完全搜不了。
  */
@@ -1121,27 +1133,48 @@ async function doImport() {
     // 阶段一：建料 / 补全资料（逐行处理），收集待入账明细
     const stockItems: StockOrderItem[] = []
     const srcSet = new Set<string>()
+    /**
+     * 同批去重：相同「商品编号 / 型号」的待创建行只建一个物料，其余行并入同一物料的
+     * 多条入库明细（而非各建一个相同物料）。
+     * 1) matchedKeyToId：本批已匹配到库内物料的（去重键 → 物料 id），供待创建行复用，
+     *    避免「同一编号既有匹配行又有待创建行」时重复建料；
+     * 2) createdByKey：本批刚新建的物料，供后续相同编号的待创建行复用。
+     */
+    const matchedKeyToId = new Map<string, string>()
+    const createdByKey = new Map<string, string>()
+    for (const r of impRows.value) {
+      if (r.material_id && !r.pending) matchedKeyToId.set(impDedupKey(r), r.material_id)
+    }
     for (const r of impRows.value) {
       impDone.value++
       let mid = r.material_id
       const pend = r.pending
       // 待创建（新增物料表单确认）：建料（带分类 / 参数 / 手册 / 附件），随后统一入库
       if (pend) {
-        const m = await createMaterial({
-          name: pend.name, model: pend.model, brand: pend.brand, package: pend.package,
-          part_no: pend.part_no, category_id: pend.category_id, params: pend.params,
-          location: pend.location,
-          price: r.price ?? pend.price,
-          threshold: pend.threshold,
-          image_path: pend.image_path, datasheet_path: pend.datasheet_path,
-          link: pend.link, remark: r.src || null, qty: 0,
-        })
-        // 立创附件（数据手册 / 认证资料 / 行业资讯）全部落库
-        if (pend.files?.length) await createMaterialFiles(m.id, pend.files)
-        mid = m.id
-        created++
-        comps.value.push({ ...m, qty: 0 })
-        r.pending = null
+        const key = impDedupKey(r)
+        // 同编号复用：库内已匹配 / 本批已新建 → 直接挂到同一物料，不重复建料
+        const reuseId = createdByKey.get(key) ?? matchedKeyToId.get(key)
+        if (reuseId) {
+          mid = reuseId
+          r.pending = null
+        } else {
+          const m = await createMaterial({
+            name: pend.name, model: pend.model, brand: pend.brand, package: pend.package,
+            part_no: pend.part_no, category_id: pend.category_id, params: pend.params,
+            location: pend.location,
+            price: r.price ?? pend.price,
+            threshold: pend.threshold,
+            image_path: pend.image_path, datasheet_path: pend.datasheet_path,
+            link: pend.link, remark: r.src || null, qty: 0,
+          })
+          // 立创附件（数据手册 / 认证资料 / 行业资讯）全部落库
+          if (pend.files?.length) await createMaterialFiles(m.id, pend.files)
+          mid = m.id
+          createdByKey.set(key, m.id)
+          created++
+          comps.value.push({ ...m, qty: 0 })
+          r.pending = null
+        }
       } else {
         // 已匹配：仅补全空字段，不覆盖用户已维护的资料。
         // 入库前必填校验已保证每行「已匹配」或「待创建已建料」；未匹配也未新建的行禁止兜底裸建，直接跳过。

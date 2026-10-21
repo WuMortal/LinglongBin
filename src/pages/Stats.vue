@@ -743,6 +743,7 @@ async function genPoFromLow() {
 @media (max-width: 900px) {
   .kpis {
     grid-template-columns: repeat(2, 1fr);
+    margin-top: 10px;
   }
 
   .charts {

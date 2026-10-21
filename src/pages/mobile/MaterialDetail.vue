@@ -1,7 +1,7 @@
 <template>
-  <section class="mpage" v-if="m">
-    <!-- 返回栏：通用吸顶组件 -->
-    <NavBar :title="m.name" />
+  <section class="mpage" :class="{ readonly }" v-if="m">
+    <!-- 返回栏：通用吸顶组件（只读弹窗模式不渲染，外层由调用方提供关闭 X） -->
+    <NavBar v-if="!readonly" :title="m.name" @back="onNavBack" />
 
     <div class="detail">
       <!-- 头部卡片：缩略图 + 名称/标签 + 价格库存 -->
@@ -108,8 +108,8 @@
       </section>
     </div>
 
-    <!-- 底部操作栏：编辑 / 删除 + 入库 / 出库 -->
-    <div class="actbar">
+    <!-- 底部操作栏：编辑 / 删除 + 入库 / 出库（只读弹窗模式隐藏） -->
+    <div class="actbar" v-if="!readonly">
       <div class="act-ico">
         <button class="ibtn" title="编辑" @click="openEdit">
           <Pencil :size="19" style="display: inline-flex; flex-shrink: 0" />
@@ -177,6 +177,17 @@ import { confirm } from '../../composables/confirm'
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+
+/**
+ * 支持两种用法：
+ * 1. 作为路由页 /m/material/:id（默认，route.params.id 驱动）；
+ * 2. 作为只读弹窗被其它页嵌入（传 id + readonly，去掉底部操作，返回关闭弹窗）。
+ */
+const props = withDefaults(defineProps<{ id?: string; readonly?: boolean }>(), {
+  id: undefined,
+  readonly: false,
+})
+const emit = defineEmits<{ close: [] }>()
 
 const m = ref<MaterialRow | null>(null)
 const catParams = ref<CategoryParam[]>([])
@@ -261,8 +272,15 @@ async function openDs(path: string) {
 function openViewer() { if (previewUrl.value) showViewer.value = true }
 function openEdit() { showEdit.value = true }
 
+/** 返回：只读弹窗模式交给父组件关闭；否则沿用 NavBar 默认（有历史退、无历史去物料库） */
+function onNavBack() {
+  if (props.readonly) { emit('close'); return }
+  if (window.history.length > 1) router.back()
+  else router.replace('/m/materials')
+}
+
 async function load() {
-  const id = route.params.id as string
+  const id = (props.id ?? route.params.id) as string
   if (!id) return
   loadError.value = ''
   m.value = null
@@ -334,7 +352,12 @@ async function remove() {
   catch (e: unknown) { toast.error('删除失败：' + ((e as Error).message || e)) }
 }
 
-watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, { immediate: true })
+// id 优先（弹窗模式），其次路由页；route 非 m-material 且无 id 时不加载
+watch(
+  () => props.id ?? (route.name === 'm-material' ? (route.params.id as string) : null),
+  (id) => { if (id) load() },
+  { immediate: true },
+)
 </script>
 
 <style scoped>
@@ -348,6 +371,11 @@ watch(() => route.params.id, () => { if (route.name === 'm-material') load() }, 
 .detail {
   /* 给底部操作栏留空间 */
   padding-bottom: calc(84px + env(safe-area-inset-bottom));
+}
+
+/* 只读弹窗模式（嵌入扫码页详情弹窗）：无操作栏，去掉底部留白 */
+.mpage.readonly .detail {
+  padding-bottom: 12px;
 }
 
 /* ===== 头部缩略图 ===== */

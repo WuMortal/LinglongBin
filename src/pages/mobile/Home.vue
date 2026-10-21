@@ -41,24 +41,25 @@
           </span>
           <span class="e-name">待采单</span>
         </button>
-        <button class="entry" @click="go('/m/stock/import')">
-          <span class="e-ico teal">
-            <Upload :size="17" style="display: inline-flex; flex-shrink: 0" />
-          </span>
-          <span class="e-name">导入入库</span>
-        </button>
-        <button class="entry" @click="go('/m/stock/batch')">
-          <span class="e-ico teal">
-            <ArrowLeftRight :size="17" style="display: inline-flex; flex-shrink: 0" />
-          </span>
-          <span class="e-name">批量出入库</span>
-        </button>
         <button class="entry" @click="go('/m/stock/scan-in')">
           <span class="e-ico purple">
             <ScanLine :size="17" style="display: inline-flex; flex-shrink: 0" />
           </span>
           <span class="e-name">扫码入库</span>
         </button>
+        <!-- <button class="entry" @click="go('/m/stock/import')">
+          <span class="e-ico teal">
+            <Upload :size="17" style="display: inline-flex; flex-shrink: 0" />
+          </span>
+          <span class="e-name">导入入库</span>
+        </button> -->
+        <button class="entry" @click="go('/m/stock/batch')">
+          <span class="e-ico teal">
+            <ArrowLeftRight :size="17" style="display: inline-flex; flex-shrink: 0" />
+          </span>
+          <span class="e-name">批量出入库</span>
+        </button>
+
       </nav>
     </section>
 
