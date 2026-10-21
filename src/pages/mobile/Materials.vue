@@ -192,10 +192,10 @@ const loadingMore = ref(false)
 
 const showAdd = ref(false)
 
-/** 视图模式：行卡（默认，信息密集） / 双列橱窗（浏览大图） */
+/** 视图模式：双列橱窗卡片（默认，电商浏览） / 行卡（信息密集） */
 type ViewMode = 'grid' | 'list'
 const VIEW_KEY = 'llb.m.view.materials'
-const viewMode = ref<ViewMode>((localStorage.getItem(VIEW_KEY) as ViewMode) || 'list')
+const viewMode = ref<ViewMode>((localStorage.getItem(VIEW_KEY) as ViewMode) || 'grid')
 function toggleView() {
   viewMode.value = viewMode.value === 'list' ? 'grid' : 'list'
   localStorage.setItem(VIEW_KEY, viewMode.value)
