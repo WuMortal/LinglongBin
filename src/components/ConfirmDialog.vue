@@ -12,7 +12,7 @@ const state = useConfirmState()
  *   （微信 / 支付宝 / iOS action sheet 都是这一套），拇指热区落在屏幕下半部；
  * - 桌面端：保持原来的居中卡片 + 图标 + 右下按钮，一行不动。
  */
-const isMobile = getPlatformSync().kind !== 'mobile'
+const isMobile = getPlatformSync().kind === 'mobile'
 
 const iconComp = computed(() => {
   switch (state.value.variant) {

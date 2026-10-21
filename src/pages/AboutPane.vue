@@ -460,9 +460,4 @@ function formatBytes(bytes: number): string {
   }
 }
 
-@media (max-width: 600px) {
-  .feature-grid {
-    grid-template-columns: 1fr;
-  }
-}
 </style>

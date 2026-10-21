@@ -53,6 +53,12 @@
           </span>
           <span class="e-name">批量出入库</span>
         </button>
+        <button class="entry" @click="go('/m/stock/scan-in')">
+          <span class="e-ico purple">
+            <ScanLine :size="17" style="display: inline-flex; flex-shrink: 0" />
+          </span>
+          <span class="e-name">扫码入库</span>
+        </button>
       </nav>
     </section>
 
@@ -124,7 +130,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Boxes, History, ShoppingCart, Upload, ClipboardCheck, ArrowLeftRight, List,
-  TriangleAlert, CircleCheck,
+  TriangleAlert, CircleCheck, ScanLine,
 } from 'lucide-vue-next'
 import KpiCards from '../../components/KpiCards.vue'
 import PullRefresh from '../../components/mobile/PullRefresh.vue'

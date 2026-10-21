@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "tauri:dev:mobile": "set VITE_LLB_MOBILE=1&& tauri dev",
     "android:debug": "npx tauri android build --apk --debug",
     "android:release": "npx tauri android build --apk",
     "android:aab": "npx tauri android build --aab",    

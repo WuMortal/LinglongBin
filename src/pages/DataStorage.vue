@@ -423,9 +423,5 @@ async function importDb() {
   box-shadow: 0 0 6px var(--c-accent-glow);
 }
 
-@media (max-width: 600px) {
-  .mode-opts {
-    grid-template-columns: 1fr;
-  }
-}
+
 </style>

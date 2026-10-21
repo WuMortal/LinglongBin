@@ -125,6 +125,7 @@ export type StockOrderSource =
   | 'bom'       // BOM 领料出库
   | 'purchase'  // 待采单完成采购入库
   | 'stocktake' // 盘点差异调整（盘盈 in / 盘亏 out）
+  | 'scan_lcsc' // 立创扫码入库（移动端扫码入库(立创)）
   | 'legacy'    // 历史流水迁移归并的旧单
 
 /** 出入库单：先有单，再有明细（stock_log.order_id 挂单） */

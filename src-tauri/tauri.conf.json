@@ -16,7 +16,7 @@
         "title": "玲珑Bin",
         "width": 1280,
         "height": 820,
-        "minWidth": 1000,
+        "minWidth": 500,
         "minHeight": 680,
         "dragDropEnabled": false
       }

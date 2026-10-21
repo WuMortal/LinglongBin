@@ -18,8 +18,24 @@ function forceMobile(): boolean {
 }
 
 /**
+ * 系统环境变量 `VITE_LLB_MOBILE` 强制外壳（最高优先级）。
+ * 用 Vite 约定的 `VITE_` 前缀，这样它会被注入到浏览器端的 import.meta.env 里；
+ * 由 package.json 的 `tauri:dev:mobile` 等脚本在启动前 set 进去（Windows cmd 写法：
+ * `set VITE_LLB_MOBILE=1&& tauri dev`），方便在桌面 Tauri 窗口里直接测移动端。
+ *   取值：1 / true / mobile → 移动；0 / false / desktop → 桌面；其它 → 不强制（返回 null）。
+ * 默认 development / production 下该变量未设置 → 返回 null，真机与打包完全不受影响。
+ */
+function envOverride(): 'desktop' | 'mobile' | null {
+  const raw = (import.meta.env as Record<string, unknown>).VITE_LLB_MOBILE
+  const v = String(raw ?? '').trim().toLowerCase()
+  if (v === '1' || v === 'true' || v === 'mobile') return 'mobile'
+  if (v === '0' || v === 'false' || v === 'desktop') return 'desktop'
+  return null
+}
+
+/**
  * npm script 用 `vite --mode mobile|desktop` 指定的外壳（见 package.json 的 dev:mobile / dev:desktop），
- * 优先级高于自动探测，方便在桌面浏览器里直接预览移动端而不用改窗口宽度。
+ * 优先级低于系统环境变量，高于自动探测，方便在桌面浏览器里直接预览移动端而不用改窗口宽度。
  * 只在显式指定时生效：默认的 development / production 模式返回 null，真机与打包都不受影响。
  */
 function modeOverride(): 'desktop' | 'mobile' | null {
@@ -50,8 +66,8 @@ export function getPlatformSync(): PlatformInfo {
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   const mobileUA = /Android|iPhone|iPad|iPod/i.test(ua)
 
-  // 优先级：npm script 的 --mode > Tauri 真机 UA > 浏览器 localStorage 开关 / 视口宽度
-  const forced = modeOverride()
+  // 优先级：系统环境变量 VITE_LLB_MOBILE > npm script 的 --mode > Tauri 真机 UA > 浏览器 localStorage 开关 / 视口宽度
+  const forced = envOverride() ?? modeOverride()
   const kind: 'desktop' | 'mobile' = forced
     ?? (isTauri
       ? (mobileUA ? 'mobile' : 'desktop')
