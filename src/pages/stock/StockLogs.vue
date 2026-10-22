@@ -141,6 +141,7 @@ const statusOptions = [
 const SOURCE_LABELS: Record<string, string> = {
   manual: '手工', init: '初始入库', import: '订单导入', bom: 'BOM 领料',
   purchase: '待采入库', stocktake: '盘点', legacy: '历史数据',
+  scan_lcsc: '扫码入库',
 }
 function sourceLabel(s: string) { return SOURCE_LABELS[s] ?? s }
 

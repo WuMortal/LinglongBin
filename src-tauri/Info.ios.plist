@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 原生扫码插件要求在 Info.plist 中说明相机用途，否则 iOS 会直接崩溃/拒绝授权 -->
+  <key>NSCameraUsageDescription</key>
+  <string>用于扫描元器件条码进行入库</string>
+</dict>
+</plist>

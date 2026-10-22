@@ -1,6 +1,7 @@
 <template>
   <div class="mobile">
-    <main class="content" :class="{ bare: isBare }">
+    <main class="content"
+      :class="{ bare: isBare, 'hide-sb': ['m-home', 'm-materials', 'm-stats'].find(s => s === route.name) }">
       <slot />
     </main>
     <nav v-if="!isBare" class="tabbar" @contextmenu.prevent>
@@ -71,6 +72,16 @@ function menuActive(path: string): boolean {
 /* 全屏页（bare）：无 tabbar，底部只留常规留白 */
 .content.bare {
   padding-bottom: 16px;
+}
+
+/* 首页：隐藏滚动条（保留滚动能力），其它移动页仍显示细滚动条 */
+.content.hide-sb {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.content.hide-sb::-webkit-scrollbar {
+  display: none;
 }
 
 .tabbar {

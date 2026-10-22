@@ -3,6 +3,30 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 全局禁用长按复制 / 文本选择 / iOS 长按弹出菜单（App 内当原生体验） */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 输入框、文本域、可编辑区保留选择与长按，方便复制/编辑 */
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""] {
+  -webkit-user-select: auto;
+  user-select: auto;
+  -webkit-touch-callout: default;
+}
+
+/* 关闭双击/双指缩放手势（移动端） */
+html,
+body {
+  touch-action: manipulation;
+  -ms-touch-action: manipulation;
+}
+
 html,
 body,
 #app {
@@ -191,29 +215,16 @@ select {
   background: var(--c-text-3);
 }
 
-/* 页面切换过渡 */
+/* 页面切换过渡：仅用 opacity，避免 transform/filter 让内部 position:fixed
+   的底部操作栏改以页面为包含块而跟着位移（表现为「错位一下」） */
 .page-enter-active,
 .page-leave-active {
-  transition: opacity 200ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 120ms ease;
 }
 
-.page-enter-from {
-  opacity: 0;
-  transform: translateY(8px) scale(0.995);
-}
-
+.page-enter-from,
 .page-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
-}
-
-
-@media (prefers-reduced-motion: reduce) {
-
-  .page-enter-from,
-  .page-leave-to {
-    transform: none;
-  }
 }
 
 /* 弹窗遮罩 */

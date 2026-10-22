@@ -88,7 +88,21 @@ export const mobileRoutes: RouteRecordRaw[] = [
   { path: '/m/stock/purchase/new', name: 'm-stock-purchase-new', component: () => import('./pages/mobile/sub/StockPurchaseDetailPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/purchase/:id', name: 'm-stock-purchase-detail', component: () => import('./pages/mobile/sub/StockPurchaseDetailPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/import', name: 'm-stock-import', component: () => import('./pages/mobile/sub/StockImportPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
-  { path: '/m/stock/scan-in', name: 'm-stock-scan-in', component: () => import('./pages/mobile/sub/ScanInPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
+  {
+    path: '/m/stock/scan-in',
+    name: 'm-stock-scan-in',
+    component: () => import('./pages/mobile/sub/ScanInPage.vue'),
+    meta: { bare: true, activeMenu: '/m/home' },
+    // 扫码做成子路由：进入相机页时本页(父)仍挂载，系统返回键回到本页而非退出
+    children: [
+      {
+        path: 'camera',
+        name: 'm-stock-scan-camera',
+        component: () => import('./pages/mobile/sub/ScanCameraPage.vue'),
+        meta: { bare: true, activeMenu: '/m/home' },
+      },
+    ],
+  },
   { path: '/m/stock/batch', name: 'm-stock-batch', component: () => import('./pages/mobile/sub/StockBatchPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/take', name: 'm-stock-take', component: () => import('./pages/mobile/sub/StockTakePage.vue'), meta: { bare: true, activeMenu: '/m/home' } },
   { path: '/m/stock/take/new', name: 'm-stock-take-new', component: () => import('./pages/mobile/sub/StockTakeNewPage.vue'), meta: { bare: true, activeMenu: '/m/home' } },

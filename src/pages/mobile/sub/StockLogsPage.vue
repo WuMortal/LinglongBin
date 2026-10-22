@@ -148,6 +148,7 @@ const SOURCE_LABELS: Record<StockOrderSource, string> = {
   bom: 'BOM 领料',
   purchase: '采购入库',
   stocktake: '盘点调整',
+  scan_lcsc: '扫码入库(立创)',
   legacy: '历史迁移',
 }
 

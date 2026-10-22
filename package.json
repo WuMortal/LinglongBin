@@ -15,7 +15,7 @@
     "tauri:dev:mobile": "set VITE_LLB_MOBILE=1&& tauri dev",
     "android:debug": "npx tauri android build --apk --debug",
     "android:release": "npx tauri android build --apk",
-    "android:aab": "npx tauri android build --aab",    
+    "android:aab": "npx tauri android build --aab",
     "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "@tauri-apps/plugin-updater": "2.14.0",
     "echarts": "^6.1.0",
     "html5-qrcode": "^2.3.8",
+    "linglong-bin": "link:",
     "lucide-vue-next": "^1.0.0",
     "qrcode": "^1.5.4",
     "vue": "^3.4.0",

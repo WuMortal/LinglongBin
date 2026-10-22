@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 相机：H5 扫码（getUserMedia）必需。
+         wry 的 RustWebChromeClient 会把 WebView 的摄像头请求转成运行时权限申请，
+         但权限必须在此声明，否则 Android 直接静默拒绝 → NotAllowedError: Permission denied -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 

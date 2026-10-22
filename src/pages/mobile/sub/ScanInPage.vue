@@ -2,11 +2,6 @@
   <SubPage title="扫码入库(立创)" bare>
     <!-- 顶部一行：左侧说明（存在/新增含义）+ 右侧统计 -->
     <div class="top-bar">
-      <p class="content-hint">
-        <span class="t-exist">存在</span>：仅增加库存
-        <span class="sep">·</span>
-        <span class="t-new">新增</span>：自动新建物料并入库
-      </p>
       <div class="content-stat">
         <span class="ts">
           <Boxes :size="13" style="display: inline-flex; flex-shrink: 0" />共 {{ items.length }}
@@ -15,25 +10,31 @@
           <PackagePlus :size="13" style="display: inline-flex; flex-shrink: 0" />待新建 {{ pendingCount }}
         </span>
       </div>
+      <p class="content-hint">
+        <span class="t-exist">存在</span>：仅增加库存
+        <span class="sep">·</span>
+        <span class="t-new">新物</span>：自动新建物料并入库
+      </p>
+
     </div>
 
-    <!-- 录入区：手动粘贴（相机在 WebView/桌面可能不可用，手动是可靠路径；相机开关在底部栏） -->
+    <!-- 录入区：手动粘贴（相机在 WebView/桌面可能不可用，手动是可靠路径；相机开关在底部栏）
     <section class="in-card">
       <textarea v-model="rawInput" class="raw" rows="3"
         placeholder="粘贴扫码内容（可多行，每行一条；立创码为 C+数字，如 C50313803）：{on:SO..,pc:C50313803,pm:AMS1117-3.3OE,qty:20,...}" />
       <button class="add-btn" @click="addFromText">添加</button>
-    </section>
+    </section> -->
 
-    <!-- 全屏扫码组件（点击底部「扫码」打开，参考微信扫码页） -->
-    <ScanCamera v-if="cameraOn" @detected="onScan" @close="cameraOn = false" @error="onScanError" />
+    <!-- 扫码相机作为嵌套子路由全屏覆盖（/m/stock/scan-in/camera）。
+         系统返回键回到本页（父路由仍挂载，已扫列表与状态保留）。 -->
+    <router-view />
 
     <!-- 已扫列表（行卡样式，参考移动端物料库列表模式） -->
     <section v-if="items.length" class="list">
       <article v-for="it in items" :key="it.pc" class="item row-item"
         :class="{ pending: it.pending, tap: it.material_id || it.pending }" @click="openDetail(it)">
         <div class="row-thumb">
-          <img :src="thumbOf(it) || NO_IMAGE_URL" alt="暂无图片" loading="lazy"
-            :onerror="NO_IMAGE_ONERROR" />
+          <img :src="thumbOf(it) || NO_IMAGE_URL" alt="暂无图片" loading="lazy" :onerror="NO_IMAGE_ONERROR" />
           <span v-if="it.pending" class="low-tag sm">新建</span>
         </div>
         <div class="row-body">
@@ -42,7 +43,8 @@
               {{ it.material?.name || it.pc }}
               <span v-if="it.material?.name" class="row-pn">{{ it.pc }}</span>
             </h3>
-            <span class="status" :class="(it.lcscLoading || it.resolving) ? 'loading' : (it.pending ? 'warn' : 'ok')">{{ (it.lcscLoading || it.resolving) ? '查询中…' : (it.pending ? '新建' : '存在') }}</span>
+            <span class="status" :class="(it.lcscLoading || it.resolving) ? 'loading' : (it.pending ? 'warn' : 'ok')">{{
+              (it.lcscLoading || it.resolving) ? '查询中…' : (it.pending ? '新建' : '存在') }}</span>
             <span class="row-qty">×{{ it.qty }}</span>
           </div>
           <p class="row-line2">{{ (it.material?.brand || it.pm || '—') }} · {{ it.material?.model || '—' }}</p>
@@ -73,7 +75,7 @@
       <button class="ibtn" title="重置" @click="resetAll">
         <RotateCcw :size="19" style="display: inline-flex; flex-shrink: 0" />
       </button>
-      <button class="abtn scan" @click="cameraOn = true">
+      <button class="abtn scan" @click="router.push({ name: 'm-stock-scan-camera' })">
         <ScanLine :size="17" style="display: inline-flex; flex-shrink: 0" />
         扫码
       </button>
@@ -103,11 +105,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, provide } from 'vue'
 import { useRouter } from 'vue-router'
 import { ScanLine, X, RotateCcw, MapPin, Boxes, PackagePlus } from 'lucide-vue-next'
 import SubPage from '../../../components/mobile/SubPage.vue'
-import ScanCamera from '../../../components/mobile/ScanCamera.vue'
 import NumberStepper from '../../../components/mobile/NumberStepper.vue'
 import MaterialDetail from '../MaterialDetail.vue'
 import { useToast } from '../../../composables/toast'
@@ -156,6 +157,12 @@ const busy = ref(false)
 
 const pendingCount = computed(() => items.value.filter(i => i.pending).length)
 
+/** 传给相机页的统计行（组件只拼「已扫码 n 次」，这里给业务部分：匹配/待新建件数） */
+const scanStat = computed(() => {
+  const matched = items.value.length - pendingCount.value
+  return `匹配物料 ${matched} 件，待新建物料 ${pendingCount.value} 件`
+})
+
 /** 解析单条扫码串：{on:..,pc:..,pm:..,qty:..} → 字段表（键无引号、值可能为空） */
 function parseCode(raw: string): { pc: string; pm: string; on: string; qty: number } | null {
   let s = raw.trim()
@@ -180,25 +187,34 @@ function isLcscCode(pc: string): boolean {
   return /^C\d+$/.test(pc)
 }
 
-/** 批量添加（粘贴多行 / 一次多码）：按 pc 合并，已存在则累加数量；非立创码报错跳过 */
+/** 批量添加（粘贴多行 / 一次多码）：按 pc 合并，已存在则累加数量；非立创码跳过并回显原文 */
 async function addItems(text: string) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
   if (!lines.length) return
   let added = 0
   let skipped = 0
+  let firstBad = ''
   for (const line of lines) {
     const p = parseCode(line)
-    if (!p) { skipped++; continue }
-    if (!isLcscCode(p.pc)) { skipped++; continue }
+    if (!p || !isLcscCode(p.pc)) {
+      skipped++
+      if (!firstBad) firstBad = line
+      continue
+    }
     const exist = items.value.find(i => i.pc === p.pc)
     if (exist) { exist.qty += p.qty; added++ }
     else items.value.push({ ...p, material_id: null, materialName: '', pending: false, resolving: true })
   }
+  // 解析失败时把读到的原文回显，避免「扫中了却没反应」却不知道原因
+  const badTip = firstBad
+    ? `：读到了「${firstBad.length > 40 ? `${firstBad.slice(0, 40)}…` : firstBad}」`
+    : ''
   if (!added && !items.value.length) {
-    toast.error(skipped ? '未识别到有效立创物料编号（应为 C+数字，如 C50313803）' : '没有解析出有效物料编号(pc)')
+    toast.error(skipped ? `未识别到有效立创物料编号（应为 C+数字，如 C50313803）${badTip}` : '没有解析出有效物料编号(pc)')
     return
   }
-  if (skipped) toast.warning(`已跳过 ${skipped} 条非立创码`)
+  if (added) toast.success(added > 1 ? `已添加 ${added} 条物料` : '已添加 1 条物料')
+  if (skipped) toast.warning(`已跳过 ${skipped} 条非立创码${badTip}`)
   rawInput.value = ''
   await resolveMatches()
 }
@@ -401,7 +417,13 @@ async function confirmIn() {
         if (!lcsc) { try { lcsc = await lcscLookup(it.pc) } catch { /* 无网络/未收录，降级 */ } }
         let created: MaterialRow
         if (lcsc) {
-          const { major, minor } = await ensureLcscCategory(lcsc, cats)
+          // 分类不存在时按立创分类树自动建（写库，与 PC 导入入库同逻辑）；
+          // 建失败不阻断入库：降级为未分类，用户可事后在物料详情里补分类
+          let major: string | null = null
+          let minor: string | null = null
+          try {
+            ({ major, minor } = await ensureLcscCategory(lcsc, cats))
+          } catch { /* 建分类失败：留空由用户手选 */ }
           // 与 PC 导入入库同一条建料链路：参数按分类模板回填、图片存立创远程链接
           // （不下载落地，外链可直接展示）、数据手册/链接/附件一并带出
           const draft = await buildDraftFromLcsc(lcsc, cats, { price: it.price ?? undefined })
@@ -454,10 +476,14 @@ async function confirmIn() {
   }
 }
 
-/* ===== 相机扫码：抽成全屏组件 ScanCamera（参考微信扫码页） ===== */
-const cameraOn = ref(false)
+/* ===== 相机扫码：独立子路由页，系统返回键回到本页（而非退出整个入库） =====
+ * 父页通过 provide 把处理函数下发给相机子路由页（ScanCameraPage → ScanCamera）。 */
 function onScan(code: string) { void addItems(code) }
-function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
+function onScanError(msg: string) { toast.error(msg); router.back() }
+provide('scan:detected', onScan)
+provide('scan:error', onScanError)
+provide('scan:close', () => router.back())
+provide('scan:stat', scanStat)
 </script>
 
 <style scoped>
@@ -771,11 +797,12 @@ function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
 /* 顶部一行：左说明 + 右统计 */
 .top-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: baseline;
   gap: 10px;
-  flex-wrap: wrap;
   padding: 6px 10px 0;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-evenly;
 }
 
 /* 内容区顶部右侧统计：图标 + 数字 */
@@ -797,9 +824,21 @@ function onScanError(msg: string) { toast.error(msg); cameraOn.value = false }
   text-overflow: ellipsis;
   min-width: 0;
 }
-.content-hint .sep { margin: 0 4px; opacity: 0.6; }
-.content-hint .t-exist { color: var(--c-primary); font-weight: 600; }
-.content-hint .t-new { color: #d99000; font-weight: 600; }
+
+.content-hint .sep {
+  margin: 0 4px;
+  opacity: 0.6;
+}
+
+.content-hint .t-exist {
+  color: var(--c-primary);
+  font-weight: 600;
+}
+
+.content-hint .t-new {
+  color: #d99000;
+  font-weight: 600;
+}
 
 .ts {
   display: inline-flex;
