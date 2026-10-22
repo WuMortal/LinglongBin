@@ -1,5 +1,5 @@
 <template>
-  <SubPage title="出入库记录">
+  <SubPage title="出入库单">
     <PullRefresh @refresh="onRefresh">
       <div class="mpage">
         <!-- 吸顶：搜索 + 类型 / 时间 / 状态 三组 chip（替代桌面 Segmented + 两个下拉） -->
@@ -9,13 +9,15 @@
             <input v-model="kw" type="search" placeholder="搜索单号 / 标题 / 物料" />
           </div>
           <div class="chip-row">
-            <button v-for="t in typeOpts" :key="t.value" class="chip" :class="{ on: type === t.value }"
-              @click="setType(t.value)">{{ t.label }}</button>
+
+            <button v-for="r in rangeOpts" :key="r.value" class="chip" :class="{ on: range === r.value }"
+              @click="setRange(r.value)">{{ r.label
+              }}</button> <span class="chip-sep" /> <button v-for="t in typeOpts" :key="t.value" class="chip"
+              :class="{ on: type === t.value }" @click="setType(t.value)">{{ t.label }}</button>
           </div>
           <div class="chip-row">
-            <button v-for="r in rangeOpts" :key="r.value" class="chip" :class="{ on: range === r.value }"
-              @click="setRange(r.value)">{{ r.label }}</button>
-            <span class="chip-sep" />
+
+
             <button v-for="s in statusOpts" :key="s.value" class="chip" :class="{ on: status === s.value }"
               @click="setStatus(s.value)">{{ s.label }}</button>
           </div>
@@ -27,10 +29,14 @@
             <button class="retry-link" @click="reload">重试</button>
           </p>
 
-          <div v-if="loading" class="hint"><div class="spinner-lg" /></div>
+          <div v-if="loading" class="hint">
+            <div class="spinner-lg" />
+          </div>
 
           <div v-else-if="!orders.length" class="empty">
-            <div class="empty-ico"><History :size="40" style="display: inline-flex; flex-shrink: 0" /></div>
+            <div class="empty-ico">
+              <History :size="40" style="display: inline-flex; flex-shrink: 0" />
+            </div>
             <h3>{{ hasFilter ? '没有匹配的单据' : '还没有出入库单据' }}</h3>
             <p>{{ hasFilter ? '换个关键词或筛选条件试试' : '在库存列表里做出入库后会出现在这里' }}</p>
           </div>
@@ -83,7 +89,9 @@
             </div>
 
             <h4 class="d-title">明细（{{ detailLogs.length || cur.item_count }}）</h4>
-            <div v-if="detailLoading" class="hint"><div class="spinner-sm" /></div>
+            <div v-if="detailLoading" class="hint">
+              <div class="spinner-sm" />
+            </div>
             <ul v-else class="d-list">
               <li v-for="(l, i) in detailLogs" :key="l.id || i">
                 <span class="d-name">{{ l.materials?.name || '（物料已删除）' }}</span>
@@ -505,7 +513,7 @@ onBeforeUnmount(() => {
   transition: background var(--motion-fast);
 }
 
-.ocard + .ocard {
+.ocard+.ocard {
   margin-top: 8px;
 }
 
@@ -854,6 +862,8 @@ onBeforeUnmount(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

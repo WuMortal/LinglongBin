@@ -18,19 +18,23 @@
 
           <!-- 排序 + 仅低库存（横滑 chip，替代 DataTable 的表头排序） -->
           <div class="chip-row">
-            <button class="chip" :class="{ on: lowOnly }" @click="toggleLow">仅低库存</button>
+
             <button v-for="s in sorts" :key="s.key" class="chip" :class="{ on: sortKey === s.key }"
               @click="setSort(s.key)">
               {{ s.label }}
               <component :is="sortKey === s.key && sortDir === 1 ? ChevronUp : ChevronDown" :size="12"
                 style="display: inline-flex; flex-shrink: 0" />
             </button>
+            <button class="chip" :class="{ on: lowOnly }" @click="toggleLow"> 仅低库存
+              <Check v-if="lowOnly" :size="12" style="display: inline-flex; flex-shrink: 0" />
+            </button>
           </div>
 
           <!-- 已选条件（可单个清除） -->
           <div v-if="selectedTags.length" class="sel-tags">
             <button v-for="t in selectedTags" :key="t.key" class="sel-tag" @click="removeTag(t.key)">
-              {{ t.label }}<X :size="11" style="display: inline-flex; flex-shrink: 0" />
+              {{ t.label }}
+              <X :size="11" style="display: inline-flex; flex-shrink: 0" />
             </button>
             <button class="sel-tag clear" @click="clearFilter">清空</button>
           </div>
@@ -43,16 +47,20 @@
             <button class="retry-link" @click="reload">重试</button>
           </p>
 
-          <div v-if="loading" class="hint"><div class="spinner-lg" /></div>
+          <div v-if="loading" class="hint">
+            <div class="spinner-lg" />
+          </div>
 
           <div v-else-if="!rows.length" class="empty">
-            <div class="empty-ico"><Boxes :size="40" style="display: inline-flex; flex-shrink: 0" /></div>
+            <div class="empty-ico">
+              <Boxes :size="40" style="display: inline-flex; flex-shrink: 0" />
+            </div>
             <h3>{{ hasFilter ? '没有匹配的物料' : '还没有物料' }}</h3>
             <p>{{ hasFilter ? '换个关键词或分类试试' : '去物料页添加物料后再来看库存' }}</p>
           </div>
 
           <template v-else>
-            <article v-for="m in rows" :key="m.id" class="mcard" @click="openDetail(m)">
+            <article v-for="m in rows" :key="m.id" class="mcard" @click="openLogs(m)">
               <div class="mc-main">
                 <h3>{{ m.name }}</h3>
                 <p class="mc-sub">{{ [m.model, m.brand].filter(Boolean).join(' · ') || '—' }}</p>
@@ -91,11 +99,48 @@
         </div>
 
         <!-- 筛选面板（库位 → 大类 → 小类 → 扩展参数），复用物料页那套 -->
-        <MaterialFilterPanel :open="panelOpen" :tree="tree" :cat-id="catId" :params="paramSel"
-          :location="location" @apply="onFilterApply" @close="panelOpen = false" />
+        <MaterialFilterPanel :open="panelOpen" :tree="tree" :cat-id="catId" :params="paramSel" :location="location"
+          @apply="onFilterApply" @close="panelOpen = false" />
 
         <!-- 快捷出入库（底部 sheet，与物料详情页同一个组件） -->
         <QuickStockSheet :material="quickMat" @close="quickMat = null" @done="onQuickDone" />
+
+        <!-- 点行进：当前物料的出入库记录弹框（替代直接跳详情页） -->
+        <BottomSheet :open="!!detailMat" :title="detailMat?.name || '出入库记录'" tall @close="closeLogs">
+          <div v-if="detailMat" class="log-summary">
+            <span class="ls-qty">库存 <b>{{ detailMat.qty }}</b></span>
+            <span class="ls-io in">近30天入 +{{ in30(detailMat.id) }}</span>
+            <span class="ls-io out">近30天出 -{{ out30(detailMat.id) }}</span>
+          </div>
+
+          <div class="log-filters">
+            <button class="lchip" :class="{ on: logFilter === 'all' }" @click="logFilter = 'all'">全部</button>
+            <button class="lchip" :class="{ on: logFilter === 'in' }" @click="logFilter = 'in'">入库</button>
+            <button class="lchip" :class="{ on: logFilter === 'out' }" @click="logFilter = 'out'">出库</button>
+          </div>
+
+          <div v-if="detailLoading" class="log-loading"><div class="spinner-sm" /></div>
+          <p v-else-if="!visibleLogs.length" class="log-empty">暂无出入库记录</p>
+          <ul v-else class="log-list">
+            <li v-for="l in visibleLogs" :key="l.id" :class="[l.type, { 'is-void': l.status === 'void' }]">
+              <span class="tag">{{ l.type === 'in' ? '入' : '出' }}</span>
+              <div class="info">
+                <small class="who">{{ fmtLogTime(l.created_at) }}</small>
+                <small class="note" v-if="l.order_no || l.suppliers?.name || l.note">
+                  {{ [l.order_no, l.suppliers?.name, l.note].filter(Boolean).join(' · ') }}
+                </small>
+                <small v-if="l.status === 'void'" class="note void-note">
+                  已撤销<template v-if="l.void_reason">：{{ l.void_reason }}</template>
+                </small>
+              </div>
+              <span class="q">{{ l.type === 'in' ? '+' : '-' }}{{ l.qty }}</span>
+            </li>
+          </ul>
+
+          <template #foot>
+            <button class="abtn in" @click="detailMat && gotoDetail(detailMat)">查看物料详情</button>
+          </template>
+        </BottomSheet>
       </div>
     </PullRefresh>
   </SubPage>
@@ -105,27 +150,32 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Search, SlidersHorizontal, X, Boxes, MapPin, ArrowLeftRight, ChevronUp, ChevronDown,
+  Search, SlidersHorizontal, X, Boxes, MapPin, ArrowLeftRight, ChevronUp, ChevronDown, Check,
 } from 'lucide-vue-next'
 import SubPage from '../../../components/mobile/SubPage.vue'
 import PullRefresh from '../../../components/mobile/PullRefresh.vue'
 import MaterialFilterPanel from '../../../components/mobile/MaterialFilterPanel.vue'
 import QuickStockSheet from '../../../components/mobile/QuickStockSheet.vue'
+import BottomSheet from '../../../components/mobile/BottomSheet.vue'
 import {
-  listMaterialsPage, lowStockMaterials, listCategories, buildCategoryTree, descendantCategoryIds,
+  listMaterials, lowStockMaterials, listCategories, buildCategoryTree, descendantCategoryIds,
+  listStockLog,
 } from '../../../lib/db'
 import { withAuthRetry } from '../../../lib/authRetry'
 import { useStockData } from '../../../composables/useStockData'
-import type { Category, MaterialRow } from '../../../lib/types'
-import type { CategoryNode, MaterialPageOpts } from '../../../lib/db'
+import type { Category, MaterialRow, StockLog } from '../../../lib/types'
+import type { CategoryNode } from '../../../lib/db'
+import type { ListMaterialsOpts } from '../../../lib/storage'
 
 /**
  * 移动端库存列表：按物料聚合的进出汇总。
  * 与桌面 StockList 的差异（见 demo/MOBILE_STOCK_PLAN.md）：
  * - DataTable → 卡片流（库存大字 + 近30天入/出 + 行内出入库按钮）
- * - Pager → 无限滚动；「仅低库存」走 lowStockMaterials()（量小，一次性）
- * - 点行进移动端商详页 /m/material/:id，不再开桌面抽屉
- * - 排序在客户端做（口径与 PC 一致：当前页/当前结果集内排序）
+ * - Pager → 无限滚动；数据拉「筛选后的全量」，排序 + 分页都在客户端做
+ *   （服务端只按创建时间排序，客户端按库存/出入库排序才能全局正确，上滑不乱跳）
+ * - 「仅低库存」走 lowStockMaterials()（量小，一次性）
+ * - 点行进弹框展示该物料的出入库记录（listStockLog 按 materialId 取），不再直接跳详情页；
+ *   弹框底部可再跳 /m/material/:id 看完整详情
  */
 const router = useRouter()
 const { comps, summaryMap, sumOf, refreshList, refreshSummary, refreshLogs } = useStockData()
@@ -167,6 +217,8 @@ function toggleLow() {
 
 // ===== 数据 =====
 const rows = ref<MaterialRow[]>([])
+/** 筛选后的全量数据（已排序）：上滑分页只是它的切片，保证排序全局正确、上滑不乱跳 */
+const allRows = ref<MaterialRow[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
 const error = ref('')
@@ -176,7 +228,7 @@ const total = ref(0)
 /** 仅低库存模式下的生效阈值（用于标记，不在卡片上重复展示） */
 const lowThresholds = ref<Record<string, number>>({})
 
-const hasMore = computed(() => !lowOnly.value && rows.value.length < total.value)
+const hasMore = computed(() => rows.value.length < total.value)
 const hasFilter = computed(() =>
   !!search.value.trim() || !!catId.value || !!location.value
   || Object.values(paramSel.value).some(Boolean) || lowOnly.value)
@@ -236,8 +288,8 @@ function sorted(list: MaterialRow[]): MaterialRow[] {
   })
 }
 
-function buildOpts(): MaterialPageOpts {
-  const opts: MaterialPageOpts = {}
+function buildOpts(): ListMaterialsOpts {
+  const opts: ListMaterialsOpts = {}
   const kw = search.value.trim()
   if (kw) opts.search = kw
   if (location.value) opts.location = location.value
@@ -254,22 +306,24 @@ async function load() {
   error.value = ''
   page.value = 0
   try {
+    let src: MaterialRow[]
     if (lowOnly.value) {
       // 低库存量小，一次性取完（阈值由后端按「物料 > 分类 > 全局」算出）
       const lows = await withAuthRetry(() => lowStockMaterials())
       lowThresholds.value = Object.fromEntries(lows.map(l => [l.id, l.threshold]))
       const map = new Map(comps.value.map(c => [c.id, c]))
-      rows.value = sorted(lows.map(l => map.get(l.id) ?? ({
+      src = lows.map(l => map.get(l.id) ?? ({
         id: l.id, name: l.name, model: l.model, qty: l.qty,
-      } as MaterialRow)))
-      total.value = rows.value.length
-      return
+      } as MaterialRow))
+    } else {
+      lowThresholds.value = {}
+      // 拉「筛选后的全量」，排序 + 分页都放到客户端：
+      // 服务端只按创建时间排序，客户端按库存/出入库排序才能全局正确，上滑也不会乱跳
+      src = await withAuthRetry(() => listMaterials(buildOpts()))
     }
-    lowThresholds.value = {}
-    const res = await withAuthRetry(() =>
-      listMaterialsPage({ ...buildOpts(), page: 0, pageSize: PAGE_SIZE }))
-    rows.value = sorted(res.rows)
-    total.value = res.total
+    allRows.value = sorted(src)
+    total.value = allRows.value.length
+    rows.value = allRows.value.slice(0, PAGE_SIZE)
   } catch (e: unknown) {
     error.value = '加载失败：' + ((e as Error).message || e)
   } finally {
@@ -277,19 +331,13 @@ async function load() {
   }
 }
 
-async function loadMore() {
+function loadMore() {
   if (loading.value || loadingMore.value || !hasMore.value || error.value) return
   loadingMore.value = true
-  try {
-    page.value += 1
-    const res = await withAuthRetry(() =>
-      listMaterialsPage({ ...buildOpts(), page: page.value, pageSize: PAGE_SIZE }))
-    rows.value = sorted([...rows.value, ...res.rows])
-  } catch (e: unknown) {
-    error.value = '加载更多失败：' + ((e as Error).message || e)
-  } finally {
-    loadingMore.value = false
-  }
+  page.value += 1
+  // 纯前端切片，不请求：直接多展示一页
+  rows.value = allRows.value.slice(0, (page.value + 1) * PAGE_SIZE)
+  loadingMore.value = false
 }
 
 /** 筛选/搜索变化 → 重新查询（搜索 300ms 防抖） */
@@ -302,8 +350,11 @@ function reload() {
 watch([catId, location], reload)
 watch(paramSel, reload, { deep: true })
 watch(search, reload)
-// 排序只影响展示，不重新查询
-watch([sortKey, sortDir], () => { rows.value = sorted(rows.value) })
+// 排序只影响展示，不重新查询：对全量重排后再按当前已展开页数切片
+watch([sortKey, sortDir], () => {
+  allRows.value = sorted(allRows.value)
+  rows.value = allRows.value.slice(0, (page.value + 1) * PAGE_SIZE)
+})
 
 function onFilterApply(p: { catId: string | null; params: Record<string, string>; location: string | null }) {
   catId.value = p.catId
@@ -316,7 +367,44 @@ function onFilterApply(p: { catId: string | null; params: Record<string, string>
 // ===== 操作 =====
 const quickMat = ref<MaterialRow | null>(null)
 function openQuick(m: MaterialRow) { quickMat.value = m }
-function openDetail(m: MaterialRow) { router.push(`/m/material/${m.id}`) }
+
+// 点行进：弹框展示该物料的出入库记录（不再直接跳详情页）
+const detailMat = ref<MaterialRow | null>(null)
+const detailLogs = ref<StockLog[]>([])
+const detailLoading = ref(false)
+type LogFilter = 'all' | 'in' | 'out'
+const logFilter = ref<LogFilter>('all')
+const visibleLogs = computed(() =>
+  detailLogs.value.filter(l => logFilter.value === 'all' || l.type === logFilter.value))
+
+function fmtLogTime(iso: string) {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+async function openLogs(m: MaterialRow) {
+  detailMat.value = m
+  logFilter.value = 'all'
+  detailLogs.value = []
+  detailLoading.value = true
+  try {
+    detailLogs.value = await withAuthRetry(() => listStockLog({ materialId: m.id, limit: 200 }))
+  } catch (e: unknown) {
+    detailLogs.value = []
+    // 静默：列表已展示物料，弹框仅做记录查看，加载失败不影响主流程
+    console.warn('加载出入库记录失败', e)
+  } finally {
+    detailLoading.value = false
+  }
+}
+function closeLogs() { detailMat.value = null }
+
+/** 弹框里仍可跳到完整物料详情（默认点行进记录，详情走这里） */
+function gotoDetail(m: MaterialRow) {
+  closeLogs()
+  router.push(`/m/material/${m.id}`)
+}
 
 /** 出入库成功：同步共享数据，避免回首页 KPI 是旧值 */
 async function onQuickDone() {
@@ -761,6 +849,192 @@ onBeforeUnmount(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
+
+/* ===== 出入库记录弹框 ===== */
+.log-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-summary .ls-qty b {
+  color: var(--c-text);
+  font-weight: 700;
+}
+
+.log-summary .ls-io.in {
+  color: var(--c-accent);
+}
+
+.log-summary .ls-io.out {
+  color: var(--c-danger);
+}
+
+.log-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.lchip {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.lchip.on {
+  border-color: var(--c-primary);
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
+  font-weight: 600;
+}
+
+.log-loading {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.log-empty {
+  margin: 0;
+  padding: 20px 0;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+}
+
+/* 出入库记录列表：与 MaterialDetail.vue 的 .log-list 完全一致的样式 */
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.log-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--c-glass);
+}
+
+.log-list li.is-void {
+  opacity: 0.5;
+}
+
+.log-list .tag {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.log-list li.in .tag {
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
+}
+
+.log-list li.out .tag {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--c-danger);
+}
+
+.log-list .info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.log-list .who {
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-list .note {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.void-note {
+  color: var(--c-warning) !important;
+}
+
+.log-list .q {
+  flex-shrink: 0;
+  font-size: var(--fs-md);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-list li.in .q {
+  color: var(--c-primary);
+}
+
+.log-list li.out .q {
+  color: var(--c-danger);
+}
+
+/* 底部操作按钮：与移动端 .abtn 体系一致（scoped 不跨组件，这里单独声明） */
+.abtn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  border: none;
+  border-radius: var(--r-md);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  transition: transform 120ms ease-out, opacity var(--motion-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.abtn.in {
+  background: var(--c-primary);
+}
+
+.abtn.out {
+  background: var(--c-danger);
+}
+
+.abtn:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
 </style>

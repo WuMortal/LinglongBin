@@ -27,7 +27,7 @@
           <span class="e-ico blue">
             <History :size="17" style="display: inline-flex; flex-shrink: 0" />
           </span>
-          <span class="e-name">出入库记录</span>
+          <span class="e-name">出入库单</span>
         </button>
         <button class="entry" @click="go('/m/stock/take')">
           <span class="e-ico purple">
