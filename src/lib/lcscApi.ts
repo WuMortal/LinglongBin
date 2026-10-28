@@ -55,7 +55,7 @@ export interface LcscHit {
 }
 
 /** 查询类缓存有效期：7 天 */
-const TTL_QUERY = 7 * 24 * 60 * 60 * 1000
+const TTL_QUERY = 30 * 24 * 60 * 60 * 1000
 /** 图片映射缓存有效期：90 天（图片内容稳定） */
 const TTL_IMAGE = 90 * 24 * 60 * 60 * 1000
 

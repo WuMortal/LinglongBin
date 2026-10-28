@@ -152,11 +152,13 @@
         </div>
         <DataTable :columns="impCols" :rows="filteredImpRows" row-key="key" :clickable="false">
           <template #cell-model="{ row }">
-            <span class="mono" :title="row.model">{{ row.model || '—' }}</span>
-            <small v-if="row.partNo" class="row-sub mono" :title="row.partNo">#{{ row.partNo }}</small>
+            <span class="mono cp" title="点击复制型号" @click="copyField(row.model, '型号')">{{ row.model || '—' }}</span>
+            <small v-if="row.partNo" class="row-sub mono cp" title="点击复制商品编号"
+              @click="copyField(row.partNo, '商品编号')">#{{ row.partNo }}</small>
           </template>
           <template #cell-name="{ row }">
-            <span class="mono" :title="row.name || undefined">{{ row.name || '—' }}</span>
+            <span class="mono cp" :title="row.name ? '点击复制名称' : undefined"
+              @click="copyField(row.name, '名称')">{{ row.name || '—' }}</span>
           </template>
           <template #cell-qty="{ row }">
             <span class="qty-cell">{{ row.qty }}</span>
@@ -353,9 +355,19 @@ import ProgressOverlay from '../../components/ProgressOverlay.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import { useToast } from '../../composables/toast'
 import { useStockData } from '../../composables/useStockData'
+import { copyText } from '../../composables/clipboard'
 import { StockOrderItem } from '@/lib/storage/types'
 
 const toast = useToast()
+
+/** 导入列表的「型号 / 商品编号 / 名称」点击即复制该字段值 */
+async function copyField(v: unknown, label: string) {
+  const t = String(v ?? '').trim()
+  if (!t) { toast.info(`该行无${label}`); return }
+  const ok = await copyText(t)
+  if (ok) toast.success(`已复制${label}：${t}`)
+  else toast.error('复制失败，请手动选择文本')
+}
 const { comps, suppliers, suppliersLoaded, summaryMap, refreshLogs, sumOf } = useStockData()
 
 // ===== 导入入库 =====
@@ -768,8 +780,13 @@ function impDedupKey(r: ImpRow): string {
  * 行的匹配/搜索主键：立创方案用商品编号（订单里的编号即立创编码，查立创 / 挑选弹窗直达），
  * 其余方案仍用型号；立创方案缺编号时回退型号，避免完全搜不了。
  */
+/**
+ * 打开「选择物料」弹窗时带入的关键词：商品编号 + 空格 + 型号。
+ * 弹窗的多关键词搜索会按空格拆词后 OR 匹配，编号命中或型号命中的候选都会出现，
+ * 便于人工挑选；缺哪个就不带哪个。
+ */
 function impSearchKey(r: ImpRow): string {
-  return activePreset.value.id === 'lcsc' ? (r.partNo || r.model || '') : (r.model || '')
+  return [r.partNo, r.model].map(v => (v || '').trim()).filter(Boolean).join(' ').trim()
 }
 
 /**
@@ -1745,6 +1762,18 @@ const expandCache = new Map<string, StockLog[]>()
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 型号 / 商品编号 / 名称：点击即复制该字段 */
+.cp {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.cp:hover {
+  color: var(--c-primary);
+  border-bottom-color: var(--c-primary);
 }
 
 .price-cell {

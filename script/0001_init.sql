@@ -81,7 +81,9 @@ create table if not exists materials (
   package         text,
   part_no         text,       -- 商品编号
   threshold       int         default 0,                                            -- 库存预警阈值
-  qty             int         not null default 0,
+  total_qty       int         not null default 0,                                   -- 累计入库
+  use_qty         int         not null default 0,                                   -- 累计出库
+  qty             int         generated always as (total_qty - use_qty) stored,     -- 可用库存（只读派生列）
   location        text,
   price           numeric(12,2) default 0,
   image_path      text,       -- Storage 路径：<user_id>/<random>.png
@@ -442,3 +444,19 @@ returns table (
     )::bigint
   from base;
 $$;
+
+-- 15) 出入库原子累加：入库加 total_qty、出库加 use_qty，在服务端一次 UPDATE 完成，
+--     避免「读出 → 计算 → 写回」的并发覆盖。默认 SECURITY INVOKER，沿用 materials 的 RLS。
+create or replace function apply_stock_delta(p_material uuid, p_in int, p_out int)
+returns void
+language sql
+volatile
+as $$
+  update materials
+     set total_qty = total_qty + coalesce(p_in, 0),
+         use_qty   = use_qty   + coalesce(p_out, 0)
+   where id = p_material;
+$$;
+
+grant execute on function apply_stock_delta(uuid, int, int) to authenticated;
+grant execute on function apply_stock_delta(uuid, int, int) to service_role;

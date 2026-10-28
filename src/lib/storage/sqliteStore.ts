@@ -82,7 +82,12 @@ create table if not exists materials (
   package         text,
   part_no         text,
   threshold       integer     default 0,
+  -- 库存拆成两个单调递增列：可用库存 = total_qty - use_qty。
+  -- 出入库只对单列做原子增量（set total_qty = total_qty + ?），避免「读-改-写」并发覆盖。
+  -- 旧列 qty 仅作历史备份保留，新逻辑不再写入。
   qty             integer     not null default 0,
+  total_qty       integer     not null default 0,
+  use_qty         integer     not null default 0,
   location        text,
   price           real        default 0,
   image_path      text,
@@ -356,6 +361,30 @@ async function columnExists(db: Database, table: string, column: string): Promis
 }
 
 /**
+ * 库存字段拆分迁移：materials 新增 total_qty / use_qty（可用库存 = total_qty - use_qty）。
+ * 旧库首次补列时一次性回填：把旧的当前库存 qty 全部记为累计入库 total_qty，use_qty = 0；
+ * 旧 qty 列保留只读作备份，新逻辑不再写入。
+ * 幂等：列已存在时不再回填（避免把后续正常入库的累计值覆盖回旧值）。
+ */
+async function migrateMaterialQtyColumns(db: Database): Promise<void> {
+  let added = false
+  if (!(await columnExists(db, 'materials', 'total_qty'))) {
+    await db.execute('alter table materials add column total_qty integer not null default 0')
+    added = true
+  }
+  if (!(await columnExists(db, 'materials', 'use_qty'))) {
+    await db.execute('alter table materials add column use_qty integer not null default 0')
+    added = true
+  }
+  if (added) {
+    await db.execute('update materials set total_qty = coalesce(qty, 0), use_qty = 0')
+  }
+  // 兜底：老版本可能补列时未带默认值
+  await db.execute('update materials set total_qty = 0 where total_qty is null')
+  await db.execute('update materials set use_qty = 0 where use_qty is null')
+}
+
+/**
  * 生成出入库单号：RK(入)/CK(出) + 本地日期 yyyyMMdd + 4 位序号。
  * 序号取当日同前缀单号的最大值 + 1（不做 count，避免删行后重号；单用户串行无并发问题）。
  */
@@ -517,7 +546,10 @@ interface MaterialDbRow {
   id: string; owner: string; category_id: string | null
   name: string; model: string | null; brand: string | null; package: string | null
   part_no: string | null; threshold: number
-  qty: number; location: string | null
+  /** 旧列：仅历史备份，新逻辑不再写入；仅迁移回填时读取 */
+  qty: number
+  total_qty: number; use_qty: number
+  location: string | null
   price: number; image_path: string | null; datasheet_path: string | null
   link: string | null
   remark: string | null
@@ -525,6 +557,11 @@ interface MaterialDbRow {
   category_name?: string | null
   category_threshold?: number | null
   parent_name?: string | null
+}
+
+/** 可用库存 = 累计入库 - 累计出库（派生值，供统一换算） */
+function stockOf(total: unknown, use: unknown): number {
+  return (Number(total) || 0) - (Number(use) || 0)
 }
 
 function mapMaterial(r: Record<string, unknown>): MaterialRow {
@@ -535,7 +572,13 @@ function mapMaterial(r: Record<string, unknown>): MaterialRow {
     part_no: row.part_no ?? null,
     threshold: row.threshold ?? 0,
     params: {},
-    qty: row.qty, location: row.location, price: Number(row.price) || 0,
+    total_qty: Number(row.total_qty) || 0,
+    use_qty: Number(row.use_qty) || 0,
+    // 派生：可用库存（查询未带两列时回退旧列，保证老查询不炸）
+    qty: row.total_qty == null && row.use_qty == null
+      ? (Number(row.qty) || 0)
+      : stockOf(row.total_qty, row.use_qty),
+    location: row.location, price: Number(row.price) || 0,
     image_path: row.image_path, datasheet_path: row.datasheet_path,
     link: row.link ?? null,
     remark: row.remark ?? null,
@@ -733,6 +776,9 @@ function mapBomItem(r: Record<string, unknown>): BomItem {
       part_no: null,
       threshold: 0,
       params: {},
+      // comp_qty 已是「可用库存」（SQL 里算好的 total_qty - use_qty），此处只作展示快照
+      total_qty: row.comp_qty ?? 0,
+      use_qty: 0,
       qty: row.comp_qty ?? 0,
       location: null,
       price: 0,
@@ -796,6 +842,8 @@ export class SqliteStore implements DataStore {
             await db.execute(`alter table ${m.table} add column ${m.column} text`)
           }
         }
+        // 库存拆分：materials.qty → total_qty / use_qty（旧库补列 + 一次性回填）
+        try { await migrateMaterialQtyColumns(db) } catch { /* 迁移失败不阻塞启动，下次重试 */ }
         // 历史待采单补默认状态（增量补列不带默认值，需回填）
         await db.execute(`update purchase_orders set status = 'pending' where status is null or status = ''`)
         // 历史出入库记录补默认状态（增量补列不带默认值，需回填为有效）
@@ -1052,14 +1100,15 @@ export class SqliteStore implements DataStore {
     const id = payload.id || uuid()
     const alternatesStr = toJson(payload.alternates ?? [])
     await db.execute(
-      `insert into materials (id, owner, category_id, name, model, brand, package, part_no, threshold, qty, location, price, image_path, datasheet_path, link, remark, alternates, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into materials (id, owner, category_id, name, model, brand, package, part_no, threshold, qty, total_qty, use_qty, location, price, image_path, datasheet_path, link, remark, alternates, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, owner, payload.category_id ?? null, payload.name ?? '',
         payload.model ?? null, payload.brand ?? null, payload.package ?? null,
         payload.part_no ?? null,
         payload.threshold ?? 0,
-        payload.qty ?? 0, payload.location ?? null,
+        // 旧列仅作备份；库存一律由下面的「初始入库」单走 stockInOrder 累加到 total_qty
+        payload.qty ?? 0, payload.total_qty ?? 0, payload.use_qty ?? 0, payload.location ?? null,
         Number(payload.price) || 0, payload.image_path ?? null,
         payload.datasheet_path ?? null, payload.link ?? null,
         payload.remark ?? null, alternatesStr, now(),
@@ -1102,7 +1151,7 @@ export class SqliteStore implements DataStore {
       category_id: 'category_id', name: 'name', model: 'model', brand: 'brand',
       package: 'package', part_no: 'part_no',
       threshold: 'threshold',
-      qty: 'qty', location: 'location',
+      location: 'location',
       image_path: 'image_path', datasheet_path: 'datasheet_path',
       link: 'link', remark: 'remark',
     }
@@ -1112,6 +1161,13 @@ export class SqliteStore implements DataStore {
         vals.push((patch as Record<string, unknown>)[k])
       }
     }
+    // 直接改「可用库存」：total_qty = 目标库存 + 累计出库（保持 use_qty 不变）
+    if (patch.qty !== undefined) {
+      sets.push('total_qty = ? + coalesce(use_qty, 0)')
+      vals.push(Number(patch.qty) || 0)
+    }
+    if (patch.total_qty !== undefined) { sets.push('total_qty = ?'); vals.push(Number(patch.total_qty) || 0) }
+    if (patch.use_qty !== undefined) { sets.push('use_qty = ?'); vals.push(Number(patch.use_qty) || 0) }
     if (patch.price !== undefined) { sets.push('price = ?'); vals.push(Number(patch.price) || 0) }
     if (patch.alternates !== undefined) {
       sets.push('alternates = ?')
@@ -1386,7 +1442,8 @@ export class SqliteStore implements DataStore {
   async stagnantMaterials(days = 180): Promise<StagnantRow[]> {
     const db = await this.ensure()
     const rows = await db.select<Record<string, unknown>[]>(
-      `select m.id, m.name, m.model, m.brand, m.package, m.part_no, m.qty, m.price,
+      `select m.id, m.name, m.model, m.brand, m.package, m.part_no,
+              m.total_qty, m.use_qty, m.price,
               coalesce(s.last_log, m.created_at) as last_move
        from materials m
        left join (select material_id, max(created_at) as last_log from stock_log
@@ -1404,7 +1461,7 @@ export class SqliteStore implements DataStore {
         id: r.id as string, name: r.name as string,
         model: (r.model as string) ?? null, brand: (r.brand as string) ?? null,
         package: (r.package as string) ?? null, part_no: (r.part_no as string) ?? null,
-        qty: Number(r.qty) || 0, price: Number(r.price) || 0,
+        qty: stockOf(r.total_qty, r.use_qty), price: Number(r.price) || 0,
         last_move: (r.last_move as string) ?? null, days: d,
       })
     }
@@ -1456,17 +1513,24 @@ export class SqliteStore implements DataStore {
     const byId = new Map(mats.map(m => [m.id, m]))
     if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
 
+    // 入库累加 total_qty、出库累加 use_qty；写库时对单列做原子增量（total_qty = total_qty + ?），
+    // 不再「读出 qty → 算终值 → 写回 qty」，避免并发下单据相互覆盖丢失。
+    const inDelta = new Map<string, number>()
+    const outDelta = new Map<string, number>()
     const finals = new Map<string, number>()
     let totalQty = 0
     for (const it of items) {
       if (!(it.qty > 0)) throw new Error('出入库数量必须大于 0')
-      const base = finals.get(it.material_id) ?? (Number(byId.get(it.material_id)?.qty) || 0)
+      const mat = byId.get(it.material_id)
+      const base = finals.get(it.material_id) ?? stockOf(mat?.total_qty, mat?.use_qty)
       const next = base + (input.type === 'in' ? it.qty : -it.qty)
       if (next < 0) {
-        const name = byId.get(it.material_id)?.name ?? it.material_id
+        const name = mat?.name ?? it.material_id
         throw new Error(`「${name}」出库数量 ${it.qty} 超过当前库存 ${base}`)
       }
       finals.set(it.material_id, next)
+      if (input.type === 'in') inDelta.set(it.material_id, (inDelta.get(it.material_id) ?? 0) + it.qty)
+      else outDelta.set(it.material_id, (outDelta.get(it.material_id) ?? 0) + it.qty)
       totalQty += it.qty
     }
 
@@ -1505,8 +1569,15 @@ export class SqliteStore implements DataStore {
           params,
         )
       }
-      for (const [id, qty] of finals) {
-        await db.execute('update materials set qty = ? where id = ?', [qty, id])
+      // 原子增量入库：一条语句完成累加，不依赖上面读到的快照
+      for (const id of new Set([...inDelta.keys(), ...outDelta.keys()])) {
+        await db.execute(
+          `update materials
+              set total_qty = coalesce(total_qty, 0) + ?,
+                  use_qty   = coalesce(use_qty, 0) + ?
+            where id = ?`,
+          [inDelta.get(id) ?? 0, outDelta.get(id) ?? 0, id],
+        )
       }
     } catch (e) {
       // 反向补偿：不留半单（无显式事务，失败时删除已写数据）
@@ -1621,30 +1692,39 @@ export class SqliteStore implements DataStore {
       return
     }
 
-    // 回滚增量：撤销入库 → 扣回；撤销出库 → 加回（按物料聚合）
-    const deltas = new Map<string, number>()
+    // 回滚增量：撤销入库 → 扣回 total_qty；撤销出库 → 扣回 use_qty（按物料聚合）
+    const inDelta = new Map<string, number>()
+    const outDelta = new Map<string, number>()
     for (const l of logs) {
       if (!l.material_id) continue
-      const d = deltas.get(l.material_id) ?? 0
-      deltas.set(l.material_id, d + (l.type === 'in' ? -l.qty : l.qty))
+      if (l.type === 'in') inDelta.set(l.material_id, (inDelta.get(l.material_id) ?? 0) - l.qty)
+      else outDelta.set(l.material_id, (outDelta.get(l.material_id) ?? 0) - l.qty)
     }
-    const mats = await this.getMaterialsByIds([...deltas.keys()])
+    const touched = [...new Set([...inDelta.keys(), ...outDelta.keys()])]
+    const mats = await this.getMaterialsByIds(touched)
     const byId = new Map(mats.map(m => [m.id, m]))
 
     // ---- 全量校验：物料存在且回滚后不为负 ----
-    for (const [mid, delta] of deltas) {
+    for (const mid of touched) {
       const mat = byId.get(mid)
       if (!mat) continue // 物料已软删：跳过回滚，不阻塞整单撤销
-      const cur = Number(mat.qty) || 0
-      if (cur + delta < 0) {
+      const cur = stockOf(mat.total_qty, mat.use_qty)
+      // 回滚后可用库存 = (total_qty + inDelta) - (use_qty + outDelta)
+      const net = (inDelta.get(mid) ?? 0) - (outDelta.get(mid) ?? 0)
+      if (cur + net < 0) {
         throw new Error(`「${mat.name}」当前库存 ${cur}，整单撤销后将变为负数，无法撤销`)
       }
     }
-    // ---- 执行：先回滚库存，再置流水与单据撤销 ----
-    for (const [mid, delta] of deltas) {
-      const mat = byId.get(mid)
-      if (!mat) continue
-      await db.execute('update materials set qty = ? where id = ?', [Number(mat.qty) + delta, mid])
+    // ---- 执行：先回滚库存（单列原子增量），再置流水与单据撤销 ----
+    for (const mid of touched) {
+      if (!byId.get(mid)) continue
+      await db.execute(
+        `update materials
+            set total_qty = coalesce(total_qty, 0) + ?,
+                use_qty   = coalesce(use_qty, 0) + ?
+          where id = ?`,
+        [inDelta.get(mid) ?? 0, outDelta.get(mid) ?? 0, mid],
+      )
     }
     await db.execute(
       `update stock_log set status = 'void', void_reason = ?, voided_at = ?
@@ -1764,7 +1844,7 @@ export class SqliteStore implements DataStore {
     const placeholders = ids.map(() => '?').join(',')
     const rows = await db.select<Record<string, unknown>[]>(
       `select bi.*, c.id as comp_id, c.name as comp_name, c.model as comp_model,
-              c.brand as comp_brand, c.package as comp_package, c.qty as comp_qty,
+              c.brand as comp_brand, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty,
               c.image_path as comp_image_path, c.alternates as comp_alternates,
               cat.name as comp_category_name
        from bom_items bi
@@ -1780,7 +1860,7 @@ export class SqliteStore implements DataStore {
     const db = await this.ensure()
     const rows = await db.select<Record<string, unknown>[]>(
       `select bi.*, c.id as comp_id, c.name as comp_name, c.model as comp_model,
-              c.brand as comp_brand, c.package as comp_package, c.qty as comp_qty,
+              c.brand as comp_brand, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty,
               c.image_path as comp_image_path, c.alternates as comp_alternates,
               cat.name as comp_category_name
        from bom_items bi
@@ -1806,7 +1886,7 @@ export class SqliteStore implements DataStore {
     }
     const rows = await db.select<Record<string, unknown>[]>(
       `select bi.*, c.id as comp_id, c.name as comp_name, c.model as comp_model,
-              c.brand as comp_brand, c.package as comp_package, c.qty as comp_qty,
+              c.brand as comp_brand, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty,
               c.image_path as comp_image_path, c.alternates as comp_alternates,
               cat.name as comp_category_name
        from bom_items bi
@@ -1994,7 +2074,7 @@ export class SqliteStore implements DataStore {
     }
     const placeholders = ids.map(() => '?').join(',')
     const rows = await db.select<Record<string, unknown>[]>(
-      `select pi.*, c.name as comp_name, c.model as comp_model, c.package as comp_package, c.qty as comp_qty
+      `select pi.*, c.name as comp_name, c.model as comp_model, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty
        from purchase_items pi
        left join materials c on c.id = pi.material_id and c.deleted_at is null
        where pi.id in (${placeholders})`,
@@ -2006,7 +2086,7 @@ export class SqliteStore implements DataStore {
   async listPurchaseItems(orderId: string): Promise<PurchaseItem[]> {
     const db = await this.ensure()
     const rows = await db.select<Record<string, unknown>[]>(
-      `select pi.*, c.name as comp_name, c.model as comp_model, c.package as comp_package, c.qty as comp_qty
+      `select pi.*, c.name as comp_name, c.model as comp_model, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty
        from purchase_items pi
        left join materials c on c.id = pi.material_id and c.deleted_at is null
        where pi.order_id = ?
@@ -2036,7 +2116,7 @@ export class SqliteStore implements DataStore {
       await db.execute(`update purchase_items set ${sets.join(', ')} where id = ?`, vals)
     }
     const rows = await db.select<Record<string, unknown>[]>(
-      `select pi.*, c.name as comp_name, c.model as comp_model, c.package as comp_package, c.qty as comp_qty
+      `select pi.*, c.name as comp_name, c.model as comp_model, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty
        from purchase_items pi
        left join materials c on c.id = pi.material_id and c.deleted_at is null
        where pi.id = ?`,
@@ -2120,10 +2200,10 @@ export class SqliteStore implements DataStore {
       { total_materials: number; total_qty: number; total_value: number | null; low_stock: number }[]
     >(
       `select count(*) as total_materials,
-              coalesce(sum(c.qty), 0) as total_qty,
-              coalesce(sum(c.qty * c.price), 0) as total_value,
+              coalesce(sum(coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)), 0) as total_qty,
+              coalesce(sum((coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) * c.price), 0) as total_value,
               coalesce(sum(
-                case when c.qty <= coalesce(nullif(c.threshold, 0), nullif(cat.threshold, 0), ${DEFAULT_LOW_THRESHOLD})
+                case when (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) <= coalesce(nullif(c.threshold, 0), nullif(cat.threshold, 0), ${DEFAULT_LOW_THRESHOLD})
                      then 1 else 0 end
               ), 0) as low_stock
        from materials c
@@ -2147,8 +2227,8 @@ export class SqliteStore implements DataStore {
       `select c.category_id,
               cat.name as name,
               cat.threshold as threshold,
-              coalesce(sum(c.qty), 0) as qty,
-              coalesce(sum(c.qty * c.price), 0) as value,
+              coalesce(sum(coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)), 0) as qty,
+              coalesce(sum((coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) * c.price), 0) as value,
               0 as low
        from materials c
        left join categories cat on cat.id = c.category_id
@@ -2167,7 +2247,9 @@ export class SqliteStore implements DataStore {
   async lowStockMaterials(globalThreshold = 5): Promise<LowStockRow[]> {
     const db = await this.ensure()
     const rows = await db.select<{ id: string; name: string; model: string | null; qty: number; threshold: number | null; cat_threshold: number | null }[]>(
-      `select c.id, c.name, c.model, c.qty, c.threshold, cat.threshold as cat_threshold
+      `select c.id, c.name, c.model, c.threshold,
+              coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0) as qty,
+              cat.threshold as cat_threshold
        from materials c
        left join categories cat on cat.id = c.category_id
        where c.deleted_at is null`,

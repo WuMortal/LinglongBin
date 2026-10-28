@@ -156,8 +156,15 @@ const cands = computed<MaterialRow[]>(() => {
   if (keys.length) {
     list = list.filter(m => keys.every(k => String(m.params?.[k] ?? '') === paramSel[k]))
   }
-  const k = kw.value.trim().toLowerCase()
-  if (k) list = list.filter(c => (c.name + ' ' + (c.model || '')).toLowerCase().includes(k))
+  // 关键词按空格 / 逗号分词，任一词命中即返回（与后端 listMaterials 一致），
+  // 这样「商品编号 型号」这类组合关键词能分别命中编号或型号
+  const kws = kw.value.trim().toLowerCase().split(/[\s,，]+/).filter(Boolean)
+  if (kws.length) {
+    list = list.filter(c => {
+      const hay = `${c.name} ${c.model || ''} ${c.part_no || ''} ${c.brand || ''}`.toLowerCase()
+      return kws.some(w => hay.includes(w))
+    })
+  }
   return list
 })
 
@@ -497,6 +504,8 @@ function choose(c: MaterialRow) { emit('pick', c) }
   color: var(--c-text-2);
   font-size: var(--fs-xs);
 }
+
+
 
 .mq {
   font-weight: 700;

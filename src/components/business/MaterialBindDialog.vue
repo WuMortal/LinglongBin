@@ -7,6 +7,7 @@ import type { LcscHit } from '../../lib/lcscApi'
 import MaterialPickerPanel from './MaterialPickerPanel.vue'
 import LcscPickerPanel from './LcscPickerPanel.vue'
 import MaterialFormPanel from './MaterialFormPanel.vue'
+import { isLcscCode } from '../../lib/lcscApi'
 
 type Picked =
   | { kind: 'material'; item: MaterialRow }
@@ -54,6 +55,16 @@ const allowLcsc = computed(() => props.allowLcsc !== false)
 /** 新建 tab 需显式开启（Boolean prop 默认 false） */
 const allowNew = computed(() => props.allowNew === true)
 const kind = ref<'new' | 'material' | 'lcsc'>('material')
+
+/**
+ * 立创 tab 的关键词：调用方可传入「商品编号 型号」这类组合词（物料库 tab 会拆词 OR 匹配），
+ * 但立创搜索是整词精确查询，组合词查不到结果，故这里挑出其中的立创编号（无则取第一个词）。
+ */
+const lcscKeyword = computed(() => {
+  const toks = (props.keyword || '').split(/[\s,，]+/).map(s => s.trim()).filter(Boolean)
+  if (!toks.length) return props.keyword || ''
+  return toks.find(t => isLcscCode(t)) ?? toks[0]
+})
 
 /** 「新建物料」tab 的表单面板：保存中状态由其暴露 */
 const newPanel = ref<InstanceType<typeof MaterialFormPanel> | null>(null)
@@ -127,7 +138,7 @@ watch(visible, v => {
             <MaterialPickerPanel v-else-if="kind === 'material'" :keyword="keyword"
               @pick="onMaterialPick" />
             <LcscPickerPanel v-else ref="lcscPanel" v-model:selected="lcscSel" :footer-pick="true"
-              :keyword="keyword" @pick="onLcscPick" />
+              :keyword="lcscKeyword" @pick="onLcscPick" />
           </section>
         </div>
 

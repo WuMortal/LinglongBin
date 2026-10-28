@@ -46,6 +46,18 @@ export interface MaterialRow {
   part_no: string | null
   threshold: number
   params: Record<string, unknown>
+  /**
+   * 累计入库数量（单调递增）。与 use_qty 分离，出入库只需对单列做原子增量
+   * （update ... set total_qty = total_qty + ?），避免「读-改-写」导致的并发覆盖。
+   */
+  total_qty: number
+  /** 累计出库数量（单调递增） */
+  use_qty: number
+  /**
+   * 当前可用库存 = total_qty - use_qty。
+   * 【派生值】不是数据库列，由 store 在返回行时计算，供上层展示/校验使用；
+   * 写入时请勿直接改它，应走出入库单或直接改 total_qty / use_qty。
+   */
   qty: number
   location: string | null
   price: number

@@ -55,6 +55,11 @@ function yyyyMMdd(d = new Date()): string {
   return `${d.getFullYear()}${m}${day}`
 }
 
+/** 可用库存 = 累计入库 - 累计出库（与云端生成列 materials.qty 同义） */
+function stockOf(total: unknown, use: unknown): number {
+  return (Number(total) || 0) - (Number(use) || 0)
+}
+
 /** stock_orders 行归一化：status 空值视为 normal（历史数据兜底） */
 function mapStockOrder(r: Record<string, unknown>): StockOrder {
   const row = r as unknown as StockOrder
@@ -281,9 +286,14 @@ export class SupabaseStore implements DataStore {
     const owner = await this.getOwnerId()
     if (!payload.owner) payload = { ...payload, owner }
     // 参数值走独立表，不再写入 materials.params 列
+    // qty 是生成列（total_qty - use_qty），不可写入；初始库存一律走下面的「初始入库」单累加 total_qty
     const paramsValue = payload.params
-    const { params, ...rest } = payload
-    const { data, error } = await supabase.from('materials').insert(rest).select().single()
+    const { params, qty: _q, ...rest } = payload
+    const { data, error } = await supabase.from('materials').insert({
+      ...rest,
+      total_qty: payload.total_qty ?? 0,
+      use_qty: payload.use_qty ?? 0,
+    }).select().single()
     if (error) throw error
     const created = data as MaterialRow
     if (paramsValue !== undefined) {
@@ -313,7 +323,12 @@ export class SupabaseStore implements DataStore {
   }
 
   async updateMaterial(id: string, patch: Partial<MaterialRow>): Promise<MaterialRow> {
-    const { params, ...rest } = patch
+    // qty 为生成列不可写：直接改「可用库存」时换算成 total_qty = 目标库存 + 累计出库
+    const { params, qty, ...rest } = patch
+    if (qty !== undefined) {
+      const cur = await this.getMaterial(id)
+      rest.total_qty = (Number(qty) || 0) + (Number(cur.use_qty) || 0)
+    }
     if (Object.keys(rest).length) {
       const { error } = await supabase.from('materials').update(rest).eq('id', id)
       if (error) throw error
@@ -667,6 +682,23 @@ export class SupabaseStore implements DataStore {
   }
 
   /**
+   * 库存累加：优先走服务端 RPC apply_stock_delta 做原子增量（total_qty = total_qty + ?），
+   * 云端尚未执行迁移（函数不存在）时回退为「读到的快照 + 增量」绝对写入。
+   */
+  private async applyStockDelta(
+    id: string, inD: number, outD: number,
+    cur?: { total_qty?: number | null; use_qty?: number | null },
+  ): Promise<void> {
+    const { error } = await supabase.rpc('apply_stock_delta', { p_material: id, p_in: inD, p_out: outD })
+    if (!error) return
+    const { error: e2 } = await supabase.from('materials').update({
+      total_qty: (Number(cur?.total_qty) || 0) + inD,
+      use_qty: (Number(cur?.use_qty) || 0) + outD,
+    }).eq('id', id)
+    if (e2) throw e2
+  }
+
+  /**
    * 建单并批量入账：一次出入库 = 1 单 N 明细。
    * 先全量校验（物料存在、数量 > 0、出库不超库存）→ 建单 → 批量写明细 →
    * 并发更新库存；任一步失败清理已写数据后抛错（PostgREST 无事务，validate-then-write 反向补偿）。
@@ -683,24 +715,30 @@ export class SupabaseStore implements DataStore {
     const ids = [...new Set(items.map(i => i.material_id))]
     const { data: matsRaw, error: eMats } = await supabase
       .from('materials')
-      .select('id, name, qty')
+      .select('id, name, total_qty, use_qty')
       .is('deleted_at', null)
       .in('id', ids)
     if (eMats) throw eMats
     const byId = new Map((matsRaw || []).map(m => [m.id, m]))
     if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
 
+    // 入库累加 total_qty、出库累加 use_qty；写库走服务端原子增量，避免并发覆盖
+    const inDelta = new Map<string, number>()
+    const outDelta = new Map<string, number>()
     const finals = new Map<string, number>()
     let totalQty = 0
     for (const it of items) {
       if (!(it.qty > 0)) throw new Error('出入库数量必须大于 0')
-      const base = finals.get(it.material_id) ?? (Number(byId.get(it.material_id)?.qty) || 0)
+      const mat = byId.get(it.material_id)
+      const base = finals.get(it.material_id) ?? stockOf(mat?.total_qty, mat?.use_qty)
       const next = base + (input.type === 'in' ? it.qty : -it.qty)
       if (next < 0) {
-        const name = byId.get(it.material_id)?.name ?? it.material_id
+        const name = mat?.name ?? it.material_id
         throw new Error(`「${name}」出库数量 ${it.qty} 超过当前库存 ${base}`)
       }
       finals.set(it.material_id, next)
+      if (input.type === 'in') inDelta.set(it.material_id, (inDelta.get(it.material_id) ?? 0) + it.qty)
+      else outDelta.set(it.material_id, (outDelta.get(it.material_id) ?? 0) + it.qty)
       totalQty += it.qty
     }
 
@@ -737,9 +775,8 @@ export class SupabaseStore implements DataStore {
         }
         if (res.error) throw res.error
       }
-      const updates = [...finals.entries()].map(async ([id, qty]) => {
-        const { error } = await supabase.from('materials').update({ qty }).eq('id', id)
-        if (error) throw error
+      const updates = [...new Set([...inDelta.keys(), ...outDelta.keys()])].map(async id => {
+        await this.applyStockDelta(id, inDelta.get(id) ?? 0, outDelta.get(id) ?? 0, byId.get(id))
       })
       await Promise.all(updates)
     } catch (e) {
@@ -856,31 +893,34 @@ export class SupabaseStore implements DataStore {
     const logs = ((logsRaw || []) as StockLog[]).filter(l => l.status !== 'void')
 
     if (logs.length) {
-      // 回滚增量：撤销入库 → 扣回；撤销出库 → 加回（按物料聚合）
-      const deltas = new Map<string, number>()
+      // 回滚增量：撤销入库 → 扣回 total_qty；撤销出库 → 扣回 use_qty（按物料聚合）
+      const inDelta = new Map<string, number>()
+      const outDelta = new Map<string, number>()
       for (const l of logs) {
         if (!l.material_id) continue
-        const d = deltas.get(l.material_id) ?? 0
-        deltas.set(l.material_id, d + (l.type === 'in' ? -l.qty : l.qty))
+        if (l.type === 'in') inDelta.set(l.material_id, (inDelta.get(l.material_id) ?? 0) - l.qty)
+        else outDelta.set(l.material_id, (outDelta.get(l.material_id) ?? 0) - l.qty)
       }
-      const mats = await this.getMaterialsByIds([...deltas.keys()])
+      const touched = [...new Set([...inDelta.keys(), ...outDelta.keys()])]
+      const mats = await this.getMaterialsByIds(touched)
       const byId = new Map(mats.map(m => [m.id, m]))
 
       // ---- 全量校验：物料存在且回滚后不为负 ----
-      const rollbackList: Array<{ id: string; qty: number }> = []
-      for (const [mid, delta] of deltas) {
+      const rollbackList: Array<{ id: string; inD: number; outD: number }> = []
+      for (const mid of touched) {
         const mat = byId.get(mid)
         if (!mat) continue // 物料已软删：跳过回滚，不阻塞整单撤销
-        const cur = Number(mat.qty) || 0
-        if (cur + delta < 0) {
+        const cur = stockOf(mat.total_qty, mat.use_qty)
+        // 回滚后可用库存 = (total_qty + inD) - (use_qty + outD)
+        const net = (inDelta.get(mid) ?? 0) - (outDelta.get(mid) ?? 0)
+        if (cur + net < 0) {
           throw new Error(`「${mat.name}」当前库存 ${cur}，整单撤销后将变为负数，无法撤销`)
         }
-        rollbackList.push({ id: mid, qty: cur + delta })
+        rollbackList.push({ id: mid, inD: inDelta.get(mid) ?? 0, outD: outDelta.get(mid) ?? 0 })
       }
-      // ---- 执行：先回滚库存，再置流水与单据撤销 ----
+      // ---- 执行：先回滚库存（服务端原子增量），再置流水与单据撤销 ----
       await Promise.all(rollbackList.map(async r => {
-        const { error } = await supabase.from('materials').update({ qty: r.qty }).eq('id', r.id)
-        if (error) throw error
+        await this.applyStockDelta(r.id, r.inD, r.outD, byId.get(r.id))
       }))
     }
 
@@ -1228,7 +1268,7 @@ export class SupabaseStore implements DataStore {
         id: m.id as string, name: m.name as string,
         model: (m.model as string) ?? null, brand: (m.brand as string) ?? null,
         package: (m.package as string) ?? null, part_no: (m.part_no as string) ?? null,
-        qty: Number(m.qty) || 0, price: Number(m.price) || 0,
+        qty: stockOf(m.total_qty, m.use_qty), price: Number(m.price) || 0,
         last_move: last ?? null, days: d,
       })
     }
@@ -1254,13 +1294,14 @@ export class SupabaseStore implements DataStore {
   async statsByCategory(): Promise<StatsCategoryRow[]> {
     const { data, error } = await supabase
       .from('materials')
-      .select('category_id, qty, price, categories(name, threshold)')
+      .select('category_id, total_qty, use_qty, price, categories(name, threshold)')
       .is('deleted_at', null)
     if (error) throw error
     const map = new Map<string, { name: string; qty: number; value: number; low: number }>()
     const rows = (data as unknown as Array<{
       category_id: string | null
-      qty: number
+      total_qty: number
+      use_qty: number
       price: number
       categories: { name: string | null; threshold: number | null } | { name: string | null; threshold: number | null }[] | null
     }>) || []
@@ -1270,8 +1311,9 @@ export class SupabaseStore implements DataStore {
       const catArr = c.categories
       const cat = Array.isArray(catArr) ? (catArr[0] ?? null) : catArr
       const e = map.get(key) || { name: cat?.name || '未分类', qty: 0, value: 0, low: 0 }
-      e.qty += c.qty || 0
-      e.value += (c.qty || 0) * Number(c.price || 0)
+      const stock = stockOf(c.total_qty, c.use_qty)
+      e.qty += stock
+      e.value += stock * Number(c.price || 0)
       map.set(key, e)
     }
     return [...map.entries()].map(([k, v]) => ({ id: k, ...v }))
@@ -1280,10 +1322,10 @@ export class SupabaseStore implements DataStore {
   async lowStockMaterials(globalThreshold = 5): Promise<LowStockRow[]> {
     const { data, error } = await supabase
       .from('materials')
-      .select('id, name, model, qty, threshold, categories(threshold)')
+      .select('id, name, model, total_qty, use_qty, threshold, categories(threshold)')
       .is('deleted_at', null)
     if (error) throw error
-    return ((data as Array<{ id: string; name: string; model: string | null; qty: number; threshold: number | null; categories: { threshold: number | null }[] | null }>) || [])
+    return ((data as Array<{ id: string; name: string; model: string | null; total_qty: number; use_qty: number; threshold: number | null; categories: { threshold: number | null }[] | null }>) || [])
       .map(c => {
         const cat = c.categories && c.categories.length ? c.categories[0] : null
         // 生效阈值：物料自身（>0）→ 分类（>0）→ 全局默认
@@ -1291,7 +1333,7 @@ export class SupabaseStore implements DataStore {
         const threshold = (c.threshold || 0) > 0 ? c.threshold as number
           : catThreshold > 0 ? catThreshold
           : globalThreshold
-        return { id: c.id, name: c.name, model: c.model, qty: c.qty || 0, threshold, categories: { threshold: cat?.threshold ?? null } }
+        return { id: c.id, name: c.name, model: c.model, qty: stockOf(c.total_qty, c.use_qty), threshold, categories: { threshold: cat?.threshold ?? null } }
       })
       .filter(c => c.qty <= c.threshold)
   }

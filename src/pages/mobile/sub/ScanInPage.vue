@@ -367,6 +367,9 @@ function buildPreviewMaterial(it: ScanItem): MaterialRow {
     part_no: it.pc,
     threshold: 0,
     params: {},
+    // 展示用占位对象：扫描数量即当前库存（累计入库）
+    total_qty: it.qty,
+    use_qty: 0,
     qty: it.qty,
     location: null,
     price: it.price ?? 0,
