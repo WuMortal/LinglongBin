@@ -189,25 +189,6 @@ function cameraErrorMsg(e: unknown): string {
   }
 
   const name = (e as { name?: string })?.name || ''
-
-  // switch (name) {
-  //   case 'NotAllowedError':
-  //   case 'PermissionDeniedError':
-  //   case 'SecurityError':
-  //     return '相机权限被拒绝：请在浏览器弹窗允许，或在系统设置里给浏览器/本应用开启摄像头'
-  //   case 'NotFoundError':
-  //   case 'DevicesNotFoundError':
-  //     return '没找到可用摄像头'
-  //   case 'OverconstrainedError':
-  //     return '没有后置摄像头，或不满足后置摄像头的约束'
-  //   case 'NotReadableError':
-  //   case 'TrackStartError':
-  //     return '摄像头被其它应用占用，请关闭其它相机应用后重试'
-  //   case 'AbortError':
-  //     return '摄像头启动被中断，请重试'
-  //   default:
-  //     return `无法启动相机（${name || '未知错误'}）：${(e as { message?: string })?.message || ''}`
-  // }
   return `无法启动相机（${e})`;
 }
 
@@ -226,6 +207,7 @@ function cameraErrorMsg(e: unknown): string {
 async function pickRearCameraId(Html5Qrcode: any): Promise<string | undefined> {
   try {
     const cams: Array<{ id: string; label: string }> = await Html5Qrcode.getCameras()
+    console.log(cams,'cams');
     if (!cams?.length) return undefined
     const rear = cams
       .map(c => ({

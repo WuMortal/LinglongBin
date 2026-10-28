@@ -7,7 +7,16 @@
         <span class="app-tagline">🔧 玲珑 Bin · 电子物料库存管家</span>
       </div>
       <div class="about-actions">
-        <span class="about-version">v{{ currentVersion || '0.1.0' }}</span>
+        <div>
+          <!-- 调试模式开启时，右侧出现关闭入口 -->
+          <button v-if="debugMode" class="btn-debug-close" title="关闭调试模式" @click="onCloseDebug">
+            <XCircle :size="12" style="display: inline-flex; flex-shrink: 0" />
+            关闭调试
+          </button>
+          <span class="about-version" @click="onVersionTap"> v{{ currentVersion || '0.1.0'
+          }}</span>
+        </div>
+
         <!-- 检查更新仅桌面端提供：移动端未注册 updater 插件 -->
         <button v-if="!isMobile" class="btn-check-update"
           :disabled="status === 'checking' || status === 'downloading' || status === 'installing'" @click="handleCheck">
@@ -86,13 +95,15 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { RefreshCw, Download, CheckCircle2, XCircle, PartyPopper, Boxes, Warehouse, ListTree, PackageSearch, BarChart3, Cloud, Github } from 'lucide-vue-next'
 import logoUrl from '../../src-tauri/icons/logo.svg'
 import { useUpdaterStore } from '@/stores/updater'
 import { openExternal } from '@/lib/db'
 import { resolveRepoUrl, assertRepoUrl } from '@/lib/strKit'
 import { getPlatformSync } from '@/lib/platform'
+import { confirm } from '@/composables/confirm'
+import { debugMode, setDebugMode } from '@/lib/debugConsole'
 
 defineProps<{ embedded?: boolean }>()
 
@@ -113,6 +124,32 @@ const { status, errorMsg, currentVersion, updateInfo, progress, loadCurrentVersi
 onMounted(() => {
   loadCurrentVersion()
 })
+
+/** 连点版本号计数：累计 10 次弹出确认，开启调试模式（vConsole） */
+const versionTaps = ref(0)
+async function onVersionTap() {
+  versionTaps.value++
+  if (versionTaps.value < 10) return
+  versionTaps.value = 0
+  const ok = await confirm({
+    title: '调试模式',
+    content: '是否要打开调试模式？开启后会显示 vConsole 调试面板（记录日志、网络请求等），便于排查问题。',
+    confirmText: '开启',
+    cancelText: '取消',
+  })
+  if (ok) await setDebugMode(true)
+}
+
+/** 关闭调试模式：确认后销毁 vConsole */
+async function onCloseDebug() {
+  const ok = await confirm({
+    title: '关闭调试模式',
+    content: '确定关闭调试模式并移除 vConsole 调试面板？',
+    confirmText: '关闭',
+    cancelText: '取消',
+  })
+  if (ok) await setDebugMode(false)
+}
 
 async function handleCheck() {
   await checkForUpdate()
@@ -211,6 +248,36 @@ function formatBytes(bytes: number): string {
   font-size: var(--fs-xs);
   color: var(--c-text-2);
   font-family: monospace;
+  cursor: pointer;
+  user-select: none;
+  padding: 1px 4px;
+  border-radius: var(--r-sm);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.about-version:hover {
+  background: var(--c-glass);
+  color: var(--c-text);
+}
+
+.btn-debug-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--c-danger, #d6453d);
+  background: color-mix(in srgb, var(--c-danger, #d6453d) 12%, transparent);
+  color: var(--c-danger, #d6453d);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  transition: all var(--motion-fast);
+}
+
+.btn-debug-close:hover {
+  background: var(--c-danger, #d6453d);
+  color: #fff;
 }
 
 /* ===== 功能介绍 ===== */
@@ -459,5 +526,4 @@ function formatBytes(bytes: number): string {
     transform: rotate(360deg);
   }
 }
-
 </style>

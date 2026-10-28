@@ -4,6 +4,7 @@ import router from './router'
 import { initAppSettings } from './lib/appSettings'
 import { initAuth } from './lib/auth'
 import { initTheme } from './composables/useTheme'
+import { loadDebugMode } from './lib/debugConsole'
 import './styles/tokens.css'
 import './styles/global.css'
 
@@ -17,4 +18,6 @@ initAppSettings()
   .finally(() => initAuth())
   .finally(() => {
     createApp(App).use(router).mount('#app')
+    // 启动后根据持久化开关挂载 vConsole（默认关闭，不引入运行时代码）
+    void loadDebugMode()
   })
