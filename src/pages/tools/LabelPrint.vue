@@ -15,6 +15,9 @@
             placeholder="选择模板" />
         </span>
         <span class="sel-count">已选 {{ selectedIds.length }} 个</span>
+        <button class="btn btn-ghost" @click="openOrderImport">
+          <ArrowDownToLine :size="14" style="display: inline-flex; flex-shrink: 0" />入库单
+        </button>
         <button class="btn btn-primary" :disabled="!canPrint" @click="doPrint">
           <Printer :size="14" style="display: inline-flex; flex-shrink: 0" />打印
         </button>
@@ -53,6 +56,11 @@
             <Package :size="14" style="display: inline-flex" />已选物料
           </span>
           <span class="pane-count">{{ selectedIds.length }}</span>
+          <button class="btn btn-ghost btn-sm btn-sort" :class="{ on: sortMode === 'cat' }"
+            :title="sortMode === 'cat' ? '当前：按分类排序（大类→小类）' : '当前：按选择顺序'"
+            @click="sortMode = sortMode === 'cat' ? 'order' : 'cat'">
+            <ArrowUpDown :size="13" style="display: inline-flex; flex-shrink: 0" />{{ sortMode === 'cat' ? '分类' : '顺序' }}
+          </button>
           <button class="btn btn-ghost btn-sm btn-clear" :disabled="!selectedIds.length"
             @click="clearSelected">清空</button>
         </div>
@@ -71,6 +79,10 @@
               <span v-if="m.model" class="item-model">{{ m.model }}</span>
               <span class="item-sub" :title="itemSub(m)">{{ itemSub(m) }}</span>
             </div>
+            <span class="item-qty" title="打印张数">
+              <input type="number" min="1" :value="printCount(m.id)" @input="setPrintCount(m.id, $event)" />
+              <span class="item-qty-unit">张</span>
+            </span>
             <button class="btn btn-icon mini danger" title="移除" @click="removeSelected(m.id)">
               <X :size="13" style="display: inline-flex; flex-shrink: 0" />
             </button>
@@ -124,6 +136,58 @@
     <MaterialPickDialog v-if="pickerNode" :cat-name="pickerNode.cat.name" :cat-ids="pickerCatIds"
       :materials="allMaterials" :cat-labels="catPathMap" v-model:selected-ids="selectedIds" @close="closePicker" />
 
+    <!-- 导入入库单：选一张入库单，将其明细物料加入已选（按分类排序） -->
+    <Teleport to="body">
+      <div v-if="showOrderImport" class="oi-mask" @click.self="!orderImporting && (showOrderImport = false)">
+        <div class="oi-card" role="dialog" aria-modal="true" aria-label="导入入库单物料">
+          <button class="oi-x" aria-label="关闭" :disabled="orderImporting" @click="showOrderImport = false">
+            <X :size="16" style="display: inline-flex; flex-shrink: 0" />
+          </button>
+          <div class="oi-head">
+            <span class="oi-ico"><ArrowDownToLine :size="18" style="display: inline-flex; flex-shrink: 0" /></span>
+            <div class="oi-head-txt">
+              <h3>导入入库单物料</h3>
+              <p>可多选入库单，将其明细物料合并加入已选（自动按分类排序）</p>
+            </div>
+          </div>
+          <div class="oi-search">
+            <div class="inp-wrap">
+              <Search :size="13" class="inp-ico" style="display: inline-flex" />
+              <input v-model="orderKeyword" placeholder="搜索单号 / 标题…" @input="onOrderKw" />
+            </div>
+          </div>
+          <div class="oi-list">
+            <div v-for="o in orderList" :key="o.id" class="oi-item" :class="{ on: orderPicked.includes(o.id) }"
+              @click="toggleOrderPick(o.id)">
+              <div class="oi-main">
+                <div class="oi-line">
+                  <span class="oi-no mono">{{ o.order_no || '—' }}</span>
+                  <span class="oi-title">{{ o.title || '入库单' }}</span>
+                </div>
+                <div class="oi-sub">{{ fmtOrderDate(o.created_at) }} · {{ o.item_count }} 项 · {{ o.total_qty }} 件</div>
+              </div>
+              <span class="oi-check" :class="{ on: orderPicked.includes(o.id) }">
+                <Check :size="12" style="display: inline-flex; flex-shrink: 0" v-show="orderPicked.includes(o.id)" />
+              </span>
+            </div>
+            <div v-if="orderLoading" class="oi-busy"><span class="spinner-sm" />加载中…</div>
+            <EmptyState v-else-if="!orderList.length" :icon="Package" title="没有入库单"
+              description="暂无有效入库单，或换个关键词搜索" />
+          </div>
+          <div class="oi-foot">
+            <span v-if="orderPicked.length" class="oi-meta">已选 {{ orderPicked.length }} 张</span>
+            <span v-else-if="orderTotal" class="oi-meta">共 {{ orderTotal }} 单</span>
+            <span class="oi-grow" />
+            <button class="btn btn-sm btn-ghost" :disabled="orderImporting" @click="showOrderImport = false">取消</button>
+            <button class="btn btn-sm btn-primary" :disabled="!orderPicked.length || orderLoading || orderImporting"
+              @click="confirmOrderImport">
+              {{ orderImporting ? '导入中…' : `导入${orderPicked.length ? `（${orderPicked.length}）` : ''}` }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- 打印用：未缩放的真实尺寸整页，仅打印时显示 -->
     <Teleport to="body">
       <div v-if="curTpl" class="pv-print">
@@ -137,12 +201,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  ChevronLeft, ChevronRight, Package, Printer, Search, Tags, X, ZoomIn, ZoomOut,
+  ArrowDownToLine, ArrowUpDown, Check, ChevronLeft, ChevronRight, Package, Printer, Search, Tags, X, ZoomIn, ZoomOut,
 } from 'lucide-vue-next'
 import {
   listLabelTemplates, listMaterials, listCategories, getMaterialsByIds, buildCategoryTree,
+  pageStockOrders, listStockLogsByOrder,
 } from '../../lib/db'
-import type { Category, LabelBlock, LabelTemplate, MaterialRow } from '../../lib/types'
+import type { Category, LabelBlock, LabelTemplate, MaterialRow, StockOrder } from '../../lib/types'
 import type { CategoryNode } from '../../lib/db'
 import { materialSpecLine } from '../../lib/paramFields'
 import LabelSheet from '../../components/label/LabelSheet.vue'
@@ -151,6 +216,9 @@ import AppSelect from '../../components/form/AppSelect.vue'
 import PageBackButton from '../../components/PageBackButton.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import CategoryTree from '../../components/business/CategoryTree.vue'
+import { useToast } from '../../composables/toast'
+
+const toast = useToast()
 
 const templates = ref<LabelTemplate[]>([])
 const allMaterials = ref<MaterialRow[]>([])
@@ -265,12 +333,29 @@ function toggleCat(node: CategoryNode, on: boolean) {
 }
 function removeSelected(id: string) {
   selectedIds.value = selectedIds.value.filter(x => x !== id)
+  delete printCounts.value[id]
+  printCounts.value = { ...printCounts.value }
+}
+
+/** 每种物料的打印张数（按物料 id），缺省 = 1 */
+const printCounts = ref<Record<string, number>>({})
+
+/** 物料打印张数（最小 1） */
+function printCount(id: string): number {
+  return Math.max(1, Math.floor(printCounts.value[id] ?? 1))
+}
+/** 修改打印张数：非法/清空一律回落为 1 */
+function setPrintCount(id: string, e: Event) {
+  const raw = Number((e.target as HTMLInputElement).value)
+  const v = Math.max(1, Math.floor(isNaN(raw) ? 1 : raw))
+  printCounts.value = { ...printCounts.value, [id]: v }
 }
 
 /** 副行：品牌 + 前 3 个扩展字段（与选择物料弹框共用同一套文案），不再显示库存 */
 function itemSub(m: MaterialRow): string { return materialSpecLine(m) }
 function clearSelected() {
   selectedIds.value = []
+  printCounts.value = {}
 }
 
 const filteredSelected = computed(() => {
@@ -290,18 +375,18 @@ watch(selectedIds, async (ids) => {
   selectedRows.value = [...rows].sort((a, b) => (idx.get(a.id) ?? 0) - (idx.get(b.id) ?? 0))
 }, { immediate: true })
 
-/** 分类序号：按树顺序给每个分类一个排序权重（大类→小类）
- * 【已停用】现在按「选中的先后顺序」排，不再按分类分组；保留备查，
- * 需要恢复时把这个定义和 cmp 里注掉的那两行一起放开即可。
- */
-// const catOrder = computed(() => {
-//   const order: string[] = []
-//   for (const n of buildCategoryTree(categories.value)) {
-//     order.push(n.cat.id)
-//     for (const c of n.children) order.push(c.cat.id)
-//   }
-//   return new Map(order.map((id, i) => [id, i]))
-// })
+/** 分类序号：按树顺序给每个分类一个排序权重（大类→小类），供「按分类排序」使用 */
+const catOrder = computed(() => {
+  const order: string[] = []
+  for (const n of buildCategoryTree(categories.value)) {
+    order.push(n.cat.id)
+    for (const c of n.children) order.push(c.cat.id)
+  }
+  return new Map(order.map((id, i) => [id, i]))
+})
+
+/** 已选物料排序方式：order = 按选择/导入先后顺序；cat = 按分类（大类→小类）分组 */
+const sortMode = ref<'order' | 'cat'>('order')
 
 function materialToData(m: MaterialRow): Record<string, string> {
   const d: Record<string, string> = {
@@ -315,15 +400,18 @@ function materialToData(m: MaterialRow): Record<string, string> {
 }
 
 /**
- * 排序基准是「选中的先后顺序」：cmp 返回 0 时由稳定排序保持原顺序
- * （selectedRows 已按 selectedIds 排好，Array.sort 自 ES2019 起稳定）。
- * 只有同一分类、且该分类配了参数排序时，才按参数值排。
- * 【已注释】原来「先按分类序号（大类→小类）分组」的三行：
- *   const ca = catOrder.value.get(a.category_id ?? '') ?? 0
- *   const cb = catOrder.value.get(b.category_id ?? '') ?? 0
- *   if (ca !== cb) return ca - cb
+ * 排序基准：
+ * - sortMode = 'order'：选中/导入的先后顺序（cmp 返回 0，稳定排序保持原顺序）；
+ * - sortMode = 'cat'：先按分类序号（大类→小类）分组，再在同分类内保持先后顺序
+ *   （便于把同一分类的物料排在相邻标签，打印后按分类整理）。
+ * 两种模式下，同一分类且配了参数排序时，仍按参数值排。
  */
 function cmp(a: MaterialRow, b: MaterialRow): number {
+  if (sortMode.value === 'cat') {
+    const ca = catOrder.value.get(a.category_id ?? '') ?? Number.MAX_SAFE_INTEGER
+    const cb = catOrder.value.get(b.category_id ?? '') ?? Number.MAX_SAFE_INTEGER
+    if (ca !== cb) return ca - cb
+  }
   // 不同分类（或无分类）：不按分类分组，保持选中顺序
   if (!a.category_id || a.category_id !== b.category_id) return 0
   const cfg = curTpl.value?.cats.find(c => c.category_id === a.category_id)
@@ -337,7 +425,6 @@ function cmp(a: MaterialRow, b: MaterialRow): number {
     return cfg.sort_dir === 'desc' ? -r : r
   }
   // 同类但未配参数排序：保持选中顺序
-  // （原来按名称兜底：return (a.name ?? '').localeCompare(b.name ?? '', 'zh')）
   return 0
 }
 
@@ -351,7 +438,13 @@ const perPage = computed(() => {
 
 /** 按每页张数切片，每页渲染为一张纸；不足一页的格子由 LabelSheet 留空 */
 const pages = computed<Array<Array<{ data: Record<string, string>; blocks: LabelBlock[] }>>>(() => {
-  const arr = sortedRows.value.map(m => ({ data: materialToData(m), blocks: blocksFor(m.category_id) }))
+  // 每种物料按其「打印张数」展开为对应数量的标签
+  const arr: Array<{ data: Record<string, string>; blocks: LabelBlock[] }> = []
+  for (const m of sortedRows.value) {
+    const item = { data: materialToData(m), blocks: blocksFor(m.category_id) }
+    const cnt = printCount(m.id)
+    for (let k = 0; k < cnt; k++) arr.push(item)
+  }
   const n = perPage.value
   const out: Array<Array<{ data: Record<string, string>; blocks: LabelBlock[] }>> = []
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
@@ -359,7 +452,7 @@ const pages = computed<Array<Array<{ data: Record<string, string>; blocks: Label
   return out
 })
 
-const totalLabels = computed(() => sortedRows.value.length)
+const totalLabels = computed(() => pages.value.reduce((s, pg) => s + pg.length, 0))
 const currentPageItems = computed(() => pages.value[Math.min(pageIdx.value, pages.value.length - 1)] ?? [])
 
 watch(pages, () => { pageIdx.value = 0 })
@@ -367,6 +460,98 @@ watch(pages, () => { pageIdx.value = 0 })
 const canPrint = computed(() => !!curTpl.value && selectedIds.value.length > 0)
 
 function doPrint() { window.print() }
+
+/* ===== 导入入库单物料：选一张入库单，将其明细物料一键加入已选 =====
+ * 入库单明细（stock_log）按时间正序，可能含同一物料多条；去重后按出现顺序加入，
+ * 并自动切到「按分类排序」，方便把同分类物料排在相邻标签。
+ */
+const showOrderImport = ref(false)
+const orderList = ref<StockOrder[]>([])
+const orderTotal = ref(0)
+const orderLoading = ref(false)
+const orderKeyword = ref('')
+/** 可多选：勾选多个入库单，导入时合并其明细物料 */
+const orderPicked = ref<string[]>([])
+/** 导入入库单进行中：按钮显示「导入中…」并禁用，防止重复触发 */
+const orderImporting = ref(false)
+
+/** 日期友好显示：YYYY-MM-DD HH:mm */
+function fmtOrderDate(s?: string | null): string {
+  if (!s) return ''
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return s
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+let orderKwTimer: number | undefined
+function onOrderKw() {
+  window.clearTimeout(orderKwTimer)
+  orderKwTimer = window.setTimeout(loadOrders, 250)
+}
+
+async function loadOrders() {
+  orderLoading.value = true
+  try {
+    const res = await pageStockOrders({
+      type: 'in', status: 'normal',
+      keyword: orderKeyword.value.trim() || undefined,
+      limit: 100, offset: 0,
+    })
+    orderList.value = res.rows
+    orderTotal.value = res.total
+  } catch {
+    orderList.value = []
+    orderTotal.value = 0
+  } finally {
+    orderLoading.value = false
+  }
+}
+
+function openOrderImport() {
+  showOrderImport.value = true
+  orderKeyword.value = ''
+  orderPicked.value = []
+  orderList.value = []
+  orderTotal.value = 0
+  void loadOrders()
+}
+
+/** 多选切换：勾选 / 取消某张入库单 */
+function toggleOrderPick(id: string) {
+  const arr = orderPicked.value
+  orderPicked.value = arr.includes(id) ? arr.filter(x => x !== id) : [...arr, id]
+}
+
+async function confirmOrderImport() {
+  const picked = orderPicked.value
+  if (!picked.length || orderImporting.value) return
+  orderImporting.value = true
+  try {
+    // 跨多单累积明细，全局去重（同一物料在多个单里只取一次），保留出现顺序
+    const ids: string[] = []
+    for (const oid of picked) {
+      const logs = await listStockLogsByOrder(oid)
+      for (const l of logs) {
+        const id = l.material_id
+        if (id && !ids.includes(id)) ids.push(id)
+      }
+    }
+    const set = new Set(selectedIds.value)
+    let added = 0
+    for (const id of ids) {
+      if (!set.has(id)) { set.add(id); added++ }
+    }
+    selectedIds.value = [...set]
+    sortMode.value = 'cat'
+    showOrderImport.value = false
+    // 若明细里混入了已删除物料，selectedIds 在 filteredSelected 中会自动过滤显示，
+    // 这里只提示成功即可
+    toast.success(`已导入 ${added} 个物料（来自 ${picked.length} 张入库单，共 ${ids.length} 项明细）`)
+  } finally {
+    orderImporting.value = false
+  }
+}
 
 /* ===== 预览缩放：默认按预览区宽度自适应，可手动放大缩小 =====
  * LabelSheet 用 mm 单位渲染（A4 = 210mm），屏幕上 1mm ≈ 3.78px，
@@ -514,7 +699,7 @@ onBeforeUnmount(() => { observer?.disconnect(); observer = null })
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 220px 260px 1fr;
+  grid-template-columns: 220px 263px 1fr;
   overflow: hidden;
 }
 
@@ -687,6 +872,49 @@ onBeforeUnmount(() => { observer?.disconnect(); observer = null })
   white-space: nowrap;
 }
 
+/* 已选物料行的「打印张数」小输入框 */
+.item-qty {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.item-qty input {
+  width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.item-qty input:focus {
+  border-color: var(--c-primary);
+  outline: none;
+  background: var(--c-surface-hover);
+}
+
+/* 隐藏 number 输入的上下箭头，保持紧凑 */
+.item-qty input::-webkit-outer-spin-button,
+.item-qty input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.item-qty input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.item-qty-unit {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+
 /* ===== 右：预览 ===== */
 .preview {
   min-width: 0;
@@ -766,5 +994,264 @@ onBeforeUnmount(() => { observer?.disconnect(); observer = null })
 
 .btn-icon.mini.danger:hover {
   color: var(--c-danger);
+}
+
+/* 已选物料面板的排序切换按钮 */
+.btn-sort {
+  margin-left: auto;
+}
+
+.btn-sort.on {
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+  background: var(--c-primary-soft);
+}
+
+/* 等宽字体（单号等） */
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* 小号旋转图标（弹框加载） */
+.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--c-border);
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== 导入入库单弹框 ===== */
+.oi-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.oi-card {
+  position: relative;
+  width: min(520px, 94vw);
+  max-height: min(76vh, 680px);
+  background: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-2xl);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: oi-in 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes oi-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.oi-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--c-text-3);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  display: grid;
+  place-items: center;
+  transition: all var(--motion);
+  z-index: 1;
+}
+
+.oi-x:hover {
+  background: var(--c-glass);
+  color: var(--c-text);
+}
+
+.oi-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 16px 48px 4px 16px;
+}
+
+.oi-ico {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
+}
+
+.oi-head-txt { min-width: 0; }
+
+.oi-head-txt h3 {
+  margin: 0 0 3px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.oi-head-txt p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  line-height: 1.5;
+}
+
+.oi-search {
+  padding: 8px 16px 10px;
+}
+
+.oi-search .inp-wrap {
+  position: relative;
+  display: flex;
+}
+
+.oi-search input {
+  width: 100%;
+  height: var(--ctrl-h-sm);
+  padding: 0 10px 0 28px;
+  font-size: var(--fs-xs);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.oi-search input:focus {
+  border-color: var(--c-primary);
+  background: var(--c-surface-hover);
+}
+
+.oi-search .inp-ico {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--c-text-3);
+  pointer-events: none;
+}
+
+.oi-list {
+  margin-top: 4px;
+  padding: 0 16px 4px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.oi-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-glass);
+  cursor: pointer;
+  transition: all var(--motion);
+}
+
+.oi-item:hover { border-color: var(--c-primary); }
+
+.oi-item.on {
+  border-color: var(--c-primary);
+  background: var(--c-primary-soft);
+}
+
+.oi-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.oi-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.oi-no {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
+.oi-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.oi-sub {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--c-text-2);
+}
+
+.oi-check {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  border: 2px solid var(--c-border-strong);
+  color: #fff;
+  background: var(--c-surface);
+  transition: all var(--motion);
+}
+
+.oi-check.on {
+  border-color: var(--c-primary);
+  background: var(--c-primary);
+}
+
+.oi-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--c-text-2);
+  font-size: var(--fs-sm);
+  padding: 8px 4px;
+}
+
+.oi-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--c-border);
+  margin-top: 8px;
+}
+
+.oi-grow { flex: 1; }
+
+.oi-meta {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
 }
 </style>

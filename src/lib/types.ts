@@ -113,7 +113,7 @@ export interface StockLog {
   order_id?: string | null
   /** 所属单号（冗余展示用，联表带出） */
   order_no?: string | null
-  materials?: { name: string | null; model: string | null; package: string | null } | null
+  materials?: { name: string | null; model: string | null; package: string | null; brand?: string | null; categories?: { name: string | null } | null } | null
   suppliers?: { name: string | null } | null
 }
 

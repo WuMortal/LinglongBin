@@ -94,8 +94,10 @@
             </div>
             <ul v-else class="d-list">
               <li v-for="(l, i) in detailLogs" :key="l.id || i">
-                <span class="d-name">{{ l.materials?.name || '（物料已删除）' }}</span>
-                <small v-if="l.materials?.model" class="d-model">{{ l.materials.model }}</small>
+                <div class="d-main">
+                  <span class="d-name">{{ l.materials?.name || '（物料已删除）' }}</span>
+                  <small v-if="metaOf(l)" class="d-model">{{ metaOf(l) }}</small>
+                </div>
                 <span class="d-qty" :class="l.type">{{ l.type === 'in' ? '+' : '-' }}{{ l.qty }}</span>
               </li>
               <li v-if="!detailLogs.length" class="d-empty">暂无明细</li>
@@ -266,6 +268,11 @@ function titleOf(o: StockOrder) {
 }
 function subOf(o: StockOrder) {
   return [o.order_no, SOURCE_LABELS[o.source] || o.source, o.suppliers?.name, `${o.item_count} 项`]
+    .filter(Boolean).join(' · ')
+}
+/** 明细副标题：型号 · 品牌 · 小类（有才拼） */
+function metaOf(l: StockLog) {
+  return [l.materials?.model, l.materials?.brand, l.materials?.categories?.name]
     .filter(Boolean).join(' · ')
 }
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -682,8 +689,14 @@ onBeforeUnmount(() => {
   border-bottom: none;
 }
 
-.d-name {
+.d-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.d-name {
   min-width: 0;
   font-size: var(--fs-sm);
   white-space: nowrap;

@@ -18,7 +18,11 @@
       </div>
 
       <!-- 相机取景：html5-qrcode 会把 <video> 和它自带的取景遮罩（跟着 qrbox 走）注入到这里 -->
-      <div id="scan-reader" class="scan-cam" />
+      <div id="scan-reader" class="scan-cam" @click="onCamTap" />
+
+      <!-- 点击对焦的反馈圈：出现在触点，一次脉冲后消失 -->
+      <div v-if="focusRing" :key="focusRing.id" class="focus-ring"
+        :style="{ left: focusRing.x + 'px', top: focusRing.y + 'px' }" />
 
       <!-- 命中即时反馈：绿勾 + 文案，约 0.9s 淡出，与解码停顿同步 -->
       <Transition name="scan-flash">
@@ -86,6 +90,81 @@ function showFlash(type: FlashType, text: string, ms = 900) {
   flashTimer = window.setTimeout(() => { flash.value.show = false }, ms)
 }
 
+/* ===== 点击对焦 ===== */
+/** 对焦反馈圈：出现在触点，一次脉冲后消失（key 变化重放动画） */
+const focusRing = ref<{ id: number; x: number; y: number } | null>(null)
+let focusRingId = 0
+let focusRingTimer: number | undefined
+let resumeFocusTimer: number | undefined
+
+function showFocusRing(x: number, y: number) {
+  focusRingId++
+  focusRing.value = { id: focusRingId, x, y }
+  clearTimeout(focusRingTimer)
+  focusRingTimer = window.setTimeout(() => { focusRing.value = null }, 650)
+}
+
+/** 当前运行轨道的能力：走库自己的接口（与闪光灯同一条路径），比挖 <video>.srcObject 可靠 */
+function runningCaps(): { focusMode?: string[]; focusDistance?: { min: number; max: number } } {
+  if (!scanner) return {}
+  try { return (scanner.getRunningTrackCapabilities?.() ?? {}) } catch { return {} }
+}
+
+/** 触点坐标 → 归一化到取景区（0..1），作为对焦兴趣点 */
+function norm(v: number, size: number): number {
+  return Math.min(1, Math.max(0, v / Math.max(1, size)))
+}
+
+/** 点击取景区：先判断设备是否通过 WebRTC 开放对焦，再决定对焦还是给诚实提示 */
+function onCamTap(e: MouseEvent) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const caps = runningCaps()
+  const modes: string[] = caps.focusMode || []
+  if (!modes.length) {
+    // 设备不通过 WebRTC 开放对焦控制（多见于安卓 WebView）：不放误导性对焦圈，给诚实提示
+    console.warn('[scan-focus] 当前设备不支持网页对焦', caps)
+    showFlash('warning', '当前设备不支持触屏对焦', 1200)
+    return
+  }
+  showFocusRing(e.clientX, e.clientY)
+  void applyFocus(caps, modes, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)
+}
+
+/** 逐级退化地对焦：点对焦 → 触发一次自动对焦 → 手动对焦距离（按触点上下映射远近） */
+async function applyFocus(
+  caps: { focusDistance?: { min: number; max: number } },
+  modes: string[], px: number, py: number, w: number, h: number,
+) {
+  if (!scanner) return
+  const poi = [{ x: norm(px, w), y: norm(py, h) }]
+  try {
+    // 1) 点对焦（支持 pointsOfInterest 的设备）
+    await scanner.applyVideoConstraints({ advanced: [{ focusMode: 'single-shot', pointsOfInterest: poi }] })
+  } catch {
+    try {
+      // 2) 退化：不设兴趣点，触发一次自动对焦
+      await scanner.applyVideoConstraints({ advanced: [{ focusMode: 'single-shot' }] })
+    } catch {
+      // 3) 再退化：手动对焦距离（上部=远/下部=近，仅部分设备支持 focusDistance）
+      if (caps.focusDistance && modes.includes('manual')) {
+        const { min, max } = caps.focusDistance
+        const d = min + (py / Math.max(1, h)) * (max - min)
+        try { await scanner.applyVideoConstraints({ advanced: [{ focusMode: 'manual', focusDistance: d }] }) }
+        catch { return }
+      } else {
+        return
+      }
+    }
+  }
+  // 扫码目标会移动：稍后恢复连续对焦
+  clearTimeout(resumeFocusTimer)
+  if (modes.includes('continuous')) {
+    resumeFocusTimer = window.setTimeout(() => {
+      try { void scanner?.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }) } catch { /* */ }
+    }, 3000)
+  }
+}
+
 function fail(msg: string) {
   failed.value = true
   failMsg.value = msg
@@ -138,14 +217,40 @@ function cameraErrorMsg(e: unknown): string {
  * 属非安全上下文，浏览器会直接挡掉；手机浏览器用局域网 IP（http://192.168.x.x）同理。
  * 若在包内不可用，需另走原生相机（见历史实现：tauri-plugin-barcode-scanner）。
  */
+/**
+ * 后置主摄：枚举摄像头，在「后置」里挑序号最小的那个。
+ * 安卓 WebView 的 label 形如 "camera2 0, facing back" —— 序号越小越是主摄
+ *（0 通常为主摄，1/2 多为广角、长焦等副摄）。只给 facingMode 时 WebView 常挑到广角副摄。
+ * 取不到（未授权 / label 为空 / 格式不认识）就返回 undefined，退回 facingMode。
+ */
+async function pickRearCameraId(Html5Qrcode: any): Promise<string | undefined> {
+  try {
+    const cams: Array<{ id: string; label: string }> = await Html5Qrcode.getCameras()
+    if (!cams?.length) return undefined
+    const rear = cams
+      .map(c => ({
+        id: c.id,
+        label: c.label || '',
+        idx: Number(/camera2\s+(\d+)/.exec(c.label || '')?.[1] ?? 999),
+      }))
+      .filter(c => /back|rear|environment|后置|背面/i.test(c.label))
+      .sort((a, b) => a.idx - b.idx)
+    return rear[0]?.id
+  } catch {
+    return undefined
+  }
+}
+
 async function start() {
   try {
     const mod: any = await import('html5-qrcode')
     const Html5Qrcode = mod.Html5Qrcode
     await nextTick()
     scanner = new Html5Qrcode('scan-reader')
+    // 用确定的后置主摄 deviceId 启动，避免 WebView 自己挑到广角/副摄
+    const camId = await pickRearCameraId(Html5Qrcode)
     await scanner.start(
-      { facingMode: 'environment' },
+      camId ?? { facingMode: 'environment' },
       {
         fps: 10,
         qrbox: (vw: number, vh: number) => {
@@ -189,6 +294,8 @@ async function toggleTorch() {
 async function stop() {
   clearTimeout(resumeTimer)
   clearTimeout(flashTimer)
+  clearTimeout(focusRingTimer)
+  clearTimeout(resumeFocusTimer)
   try { if (scanner) { await scanner.stop(); await scanner.clear() } } catch { /* */ }
   scanner = null
 }
@@ -222,6 +329,25 @@ onBeforeUnmount(stop)
   width: 100% !important;
   height: 100% !important;
   object-fit: cover;
+}
+
+/* 点击对焦反馈圈：以触点为中心的一次脉冲（left/top 即视口坐标） */
+.focus-ring {
+  position: absolute;
+  z-index: 2;
+  width: 72px;
+  height: 72px;
+  margin: -36px 0 0 -36px;
+  border: 2px solid #ffd54a;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: focus-pulse 0.6s ease-out forwards;
+}
+
+@keyframes focus-pulse {
+  0% { transform: scale(1.5); opacity: 0; }
+  35% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.88); opacity: 0; }
 }
 
 /* 取景遮罩用库自带的（#qr-shaded-region，跟着 qrbox 走，命中时角标会变绿），

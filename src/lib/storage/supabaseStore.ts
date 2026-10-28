@@ -507,7 +507,7 @@ export class SupabaseStore implements DataStore {
     const { limit = 100, materialId, type } = opts
     let q = supabase
       .from('stock_log')
-      .select('*, materials(name, model, package), suppliers(name)')
+      .select('*, materials(name, model, package, brand, categories(name)), suppliers(name)')
       .order('created_at', { ascending: false })
       .limit(limit)
     if (materialId) q = q.eq('material_id', materialId)
@@ -821,7 +821,7 @@ export class SupabaseStore implements DataStore {
   async listStockLogsByOrder(orderId: string): Promise<StockLog[]> {
     const { data, error } = await supabase
       .from('stock_log')
-      .select('*, materials(name, model, package), suppliers(name)')
+      .select('*, materials(name, model, package, brand, categories(name)), suppliers(name)')
       .eq('order_id', orderId)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })

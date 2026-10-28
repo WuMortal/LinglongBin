@@ -413,3 +413,18 @@ select {
     transform: rotate(360deg);
   }
 }
+
+/* ===== 键盘避让：键盘弹出时收起底部 tabbar =====
+   edge-to-edge 下系统键盘是浮层盖上来的，fixed 的 tabbar 会浮在键盘上方，
+   这里用 body.kb-open（由 useKeyboardAvoid 切换）把 tabbar 收下去。
+   base 的 transition 保证显示/隐藏都有动画；body.kb-open .tabbar 特异性
+   (0,2,1) 高于 MobileShell 里的 scoped .tabbar[data-v](0,2,0)，可覆盖 transform。 */
+.tabbar {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+body.kb-open .tabbar {
+  transform: translateY(160%);
+  opacity: 0;
+  pointer-events: none;
+}

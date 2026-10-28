@@ -595,6 +595,7 @@ interface StockLogDbRow {
   status?: string | null; void_reason?: string | null; voided_at?: string | null
   order_id?: string | null; order_no?: string | null
   comp_name?: string | null; comp_model?: string | null; comp_package?: string | null
+  comp_brand?: string | null; comp_category?: string | null
 }
 
 function mapStockLog(r: Record<string, unknown>): StockLog {
@@ -610,7 +611,11 @@ function mapStockLog(r: Record<string, unknown>): StockLog {
     order_no: row.order_no ?? null,
     suppliers: row.supplier_name != null ? { name: row.supplier_name } : null,
     materials: row.comp_name != null
-      ? { name: row.comp_name, model: row.comp_model ?? null, package: row.comp_package ?? null }
+      ? {
+          name: row.comp_name, model: row.comp_model ?? null, package: row.comp_package ?? null,
+          brand: row.comp_brand ?? null,
+          categories: row.comp_category != null ? { name: row.comp_category } : null,
+        }
       : null,
   }
 }
@@ -1364,9 +1369,11 @@ export class SqliteStore implements DataStore {
     params.push(limit)
     const rows = await db.select<Record<string, unknown>[]>(
       `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
+              c.brand as comp_brand, cat.name as comp_category,
               sup.name as supplier_name, o.order_no as order_no
        from stock_log s
        left join materials c on c.id = s.material_id
+       left join categories cat on cat.id = c.category_id
        left join suppliers sup on sup.id = s.supplier_id
        left join stock_orders o on o.id = s.order_id
        ${where}
@@ -1577,9 +1584,11 @@ export class SqliteStore implements DataStore {
     const db = await this.ensure()
     const rows = await db.select<Record<string, unknown>[]>(
       `select s.*, c.name as comp_name, c.model as comp_model, c.package as comp_package,
+              c.brand as comp_brand, cat.name as comp_category,
               sup.name as supplier_name
        from stock_log s
        left join materials c on c.id = s.material_id
+       left join categories cat on cat.id = c.category_id
        left join suppliers sup on sup.id = s.supplier_id
        where s.order_id = ?
        order by s.created_at asc, s.id asc`,

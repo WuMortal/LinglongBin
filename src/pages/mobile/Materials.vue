@@ -1,5 +1,5 @@
 <template>
-  <section class="mpage">
+  <section ref="rootEl" class="mpage">
     <!-- 下拉刷新只包住滚动内容：PullRefresh 的内容层带 transform，会成为 fixed 的包含块，
          所以 FAB / 弹窗 / 筛选面板必须留在外面，否则会跟着位移或错位。
          section 保持单一根节点，<Transition mode="out-in"> 才能正常算出进出场。 -->
@@ -138,7 +138,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import PullRefresh from '../../components/mobile/PullRefresh.vue'
 import { Search, Plus, Box, X, SlidersHorizontal, Grid3x3, List, MapPin } from 'lucide-vue-next'
@@ -149,6 +149,9 @@ import {
 import { NO_IMAGE_URL, NO_IMAGE_ONERROR } from '../../lib/noImage'
 import { filterFieldParams } from '../../lib/paramFields'
 import type { Category, MaterialRow, CategoryParam } from '../../lib/types'
+
+/** 组件名：App.vue 的 <KeepAlive :include> 按名字匹配，必须显式声明 */
+defineOptions({ name: 'Materials' })
 import type { CategoryNode } from '../../lib/db'
 import type { ListMaterialsOpts } from '../../lib/storage'
 import { withAuthRetry } from '../../lib/authRetry'
@@ -368,6 +371,29 @@ async function onSaved() {
   await load()
   toast.success('物料已添加')
 }
+
+/** 滚动容器（MobileShell 的 .content）：页面被缓存后 DOM 会摘除，滚动位置要自己存/还原 */
+const rootEl = ref<HTMLElement | null>(null)
+let savedScroll = 0
+function scrollHost(): HTMLElement | null {
+  return rootEl.value?.closest('.content') as HTMLElement | null
+}
+/** 首次激活紧跟着 onMounted（那时已加载过），跳过；只有再次回来才刷新 */
+let firstActivate = true
+
+onActivated(async () => {
+  if (firstActivate) { firstActivate = false; return }
+  // 详情页可能改过物料（编辑 / 删除），回来重查避免看到脏数据；搜索与筛选由缓存保留
+  await load()
+  // 等列表渲染完再还原滚动位置，否则内容还没撑开、滚不到原处
+  await nextTick()
+  const host = scrollHost()
+  if (host) host.scrollTop = savedScroll
+})
+
+onDeactivated(() => {
+  savedScroll = scrollHost()?.scrollTop ?? 0
+})
 
 onMounted(() => {
   loadCategories()

@@ -204,6 +204,23 @@
       <EmptyState v-else :icon="FileText" title="导入订单开始"
         description="导入文件后将自动解析，未匹配型号可查立创 / 搜立创 / 手动指定" />
 
+      <!-- 多文件入库方式：合并为一个入库单 / 每个文件各一张（默认合并） -->
+      <div v-if="impFiles.length > 1" class="imp-merge">
+        <label class="imp-merge-row">
+          <input type="checkbox" v-model="mergeImport" />
+          <span class="imp-merge-box"><Check :size="12" style="display: inline-flex; flex-shrink: 0" v-show="mergeImport" /></span>
+          <span class="imp-merge-txt">合并为一个入库单</span>
+        </label>
+        <p class="imp-merge-tip">
+          <template v-if="mergeImport">
+            将本批 {{ impFiles.length }} 个文件合并为 <b>一张</b> 入库单（明细统一入账）
+          </template>
+          <template v-else>
+            每个文件分别作为 <b>一张</b> 独立入库单，共 {{ impFiles.length }} 张（便于按文件追溯）
+          </template>
+        </p>
+      </div>
+
       <div class="imp-foot">
         <button class="btn btn-ghost" :disabled="importing" @click="impStep = 0">
           <ChevronLeft :size="16" style="display: inline-flex; flex-shrink: 0" />上一步
@@ -309,7 +326,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import {
-  Upload, Settings, Save, X, FileText, ChevronLeft, CircleAlert, Wand,
+  Upload, Settings, Save, X, FileText, ChevronLeft, CircleAlert, Wand, Check,
 } from 'lucide-vue-next'
 import {
   listSuppliers, listCategories, matchMaterialsByKeys, createMaterial, updateMaterial,
@@ -441,6 +458,11 @@ const impDone = ref(0)
 /** 批量入库前置校验未通过列表（非空即整批阻止并弹出问题清单） */
 const impBlock = ref<ImpIssue[]>([])
 const impDragging = ref(false)
+/**
+ * 多文件入库方式：true = 合并（默认，所有文件合并为一张入库单）；
+ * false = 不合并（每个来源文件各作为一张独立的入库单，便于按文件追溯）。
+ */
+const mergeImport = ref(true)
 /** 导入方案：'auto' = 按表头自动判定，否则为 IMPORT_PRESETS 中的方案 id */
 const presetId = ref('auto')
 /** 实际生效的方案（auto 时为自动判定结果） */
@@ -1128,10 +1150,12 @@ async function doImport() {
   }
   importing.value = true
   impDone.value = 0
-  let ok = 0, created = 0
+  let ok = 0, created = 0, orderCount = 0
   try {
     // 阶段一：建料 / 补全资料（逐行处理），收集待入账明细
-    const stockItems: StockOrderItem[] = []
+    // StockItemEx 在 StockOrderItem 基础上带 src（来源文件名），用于「不合并」时按文件拆单
+    type StockItemEx = StockOrderItem & { src: string }
+    const stockItems: StockItemEx[] = []
     const srcSet = new Set<string>()
     /**
      * 同批去重：相同「商品编号 / 型号」的待创建行只建一个物料，其余行并入同一物料的
@@ -1201,35 +1225,55 @@ async function doImport() {
       stockItems.push({
         material_id: mid, qty: stockQty,
         supplier_id: r.supplier_id, note: noteOf(r),
+        src: r.src,
       })
-      if (r.src) srcSet.add(r.src)
+      srcSet.add(r.src)
       ok++
     }
-    // 阶段二：批量入账 —— 一次导入 = 一张入库单（source=import），
-    // 一次建单写完全部明细流水，再按物料聚合更新库存（网络请求远少于逐行入账）
+    // 阶段二：批量入账
+    // 合并（默认）：一次导入 = 一张入库单（source=import），写完全部明细后按物料聚合更新库存；
+    // 不合并：每个来源文件各建一张入库单，便于按文件追溯。
     if (stockItems.length) {
-      const srcs = [...srcSet]
-      const title = srcs.length === 0 ? '订单导入'
-        : srcs.length === 1 ? `${srcs[0]} 导入`
-          : `订单导入（${srcs.length} 个文件）`
-      const { finals } = await stockInOrder({
-        type: 'in', source: 'import', source_id: null,
-        title, note: null, items: stockItems,
+      // 去掉 StockItemEx 上仅用于拆单的 src 字段，得到纯 StockOrderItem
+      const stripSrc = (it: StockItemEx): StockOrderItem => ({
+        material_id: it.material_id, qty: it.qty,
+        supplier_id: it.supplier_id, note: it.note,
       })
-      // 同步本地库存
-      for (const [id, qty] of finals) {
-        const idx = comps.value.findIndex(c => c.id === id)
-        if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty }
+      const orders: Array<{ title: string; items: StockOrderItem[] }> = []
+      if (mergeImport.value) {
+        const srcs = [...srcSet]
+        const title = srcs.length === 0 ? '订单导入'
+          : srcs.length === 1 ? `${srcs[0]} 导入`
+            : `订单导入（${srcs.length} 个文件）`
+        orders.push({ title, items: stockItems.map(stripSrc) })
+      } else {
+        for (const src of srcSet) {
+          const items = stockItems.filter(it => it.src === src).map(stripSrc)
+          if (!items.length) continue
+          orders.push({ title: src ? `${src} 导入` : '订单导入', items })
+        }
       }
-      for (const it of stockItems) {
-        const sm = sumOf(it.material_id)
-        sm.total_in += it.qty; sm.last30_in += it.qty
-        summaryMap.value.set(it.material_id, sm)
+      for (const ord of orders) {
+        const { finals } = await stockInOrder({
+          type: 'in', source: 'import', source_id: null,
+          title: ord.title, note: null, items: ord.items,
+        })
+        // 同步本地库存
+        for (const [id, qty] of finals) {
+          const idx = comps.value.findIndex(c => c.id === id)
+          if (idx >= 0) comps.value[idx] = { ...comps.value[idx], qty }
+        }
+        for (const it of ord.items) {
+          const sm = sumOf(it.material_id)
+          sm.total_in += it.qty; sm.last30_in += it.qty
+          summaryMap.value.set(it.material_id, sm)
+        }
+        orderCount++
       }
     }
     expandCache.clear()
     refreshLogs()
-    toast.success(`入库完成 ${ok} 项${created ? `，新建物料 ${created}` : ''}`)
+    toast.success(`入库完成 ${ok} 项${created ? `，新建物料 ${created}` : ''}${!mergeImport.value && orderCount > 1 ? `，共 ${orderCount} 张入库单` : ''}`)
     raw.value = ''; previewText.value = ''
     impRows.value = []; headers.value = []; impFiles.value = []
     colMap.value = emptyMap()
@@ -1924,6 +1968,73 @@ const expandCache = new Map<string, StockLog[]>()
   line-height: 1.4;
   color: var(--c-danger);
   overflow-wrap: break-word;
+}
+
+/* 多文件入库方式（合并 / 不合并） */
+.imp-merge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--c-border-hairline);
+  background: var(--c-glass);
+  flex-shrink: 0;
+}
+
+.imp-merge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.imp-merge-row input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.imp-merge-box {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--c-border-strong);
+  border-radius: var(--r-sm);
+  color: #fff;
+  background: var(--c-surface);
+  transition: all var(--motion);
+}
+
+.imp-merge-row input:checked + .imp-merge-box {
+  border-color: var(--c-primary);
+  background: var(--c-primary);
+}
+
+.imp-merge-row input:focus-visible + .imp-merge-box {
+  box-shadow: 0 0 0 2px var(--c-primary-soft);
+}
+
+.imp-merge-txt {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.imp-merge-tip {
+  margin: 0;
+  padding-left: 24px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--c-text-3);
+}
+
+.imp-merge-tip b {
+  color: var(--c-text-2);
+  font-weight: 700;
 }
 
 /* 页内底部操作条 */

@@ -124,13 +124,22 @@ function fmtTime(t: string | null) {
             <!-- 明细 -->
             <section class="dw-sec">
               <h3>出/入库明细</h3>
-              <div v-if="loading" class="log-hint"><div class="spinner-sm" /></div>
+              <div v-if="loading" class="log-hint">
+                <div class="spinner-sm" />
+              </div>
               <div v-else-if="!logs.length" class="log-empty">暂无明细</div>
               <ul v-else class="log-list">
                 <li v-for="r in logs" :key="r.id" :class="{ 'is-void': r.status === 'void' }">
                   <div class="info">
-                    <strong>{{ r.materials?.name || '已删除物料' }}</strong>
-                    <small v-if="r.materials?.model">{{ r.materials.model }}</small>
+                    <div class="info-header">
+                      <strong>{{ r.materials?.name || '已删除物料' }}</strong>
+                      <small v-if="r.materials?.model"> {{ r.materials.model }}</small>
+                    </div>
+
+                    <small v-if="r.materials?.brand || r.materials?.categories?.name">
+                      {{ [r.materials?.brand ? `品牌 ${r.materials.brand}` : '', r.materials?.categories?.name ?
+                        `${r.materials.categories.name}` : ''].filter(Boolean).join(' · ') }}
+                    </small>
                     <small v-if="r.note || r.suppliers?.name">
                       {{ [r.suppliers?.name, r.note].filter(Boolean).join(' · ') }}
                     </small>
@@ -146,8 +155,8 @@ function fmtTime(t: string | null) {
 
           <!-- 底部操作：标签打印（入库单）+ 整单撤销（父页面接管确认） -->
           <footer v-if="order.status !== 'void'" class="dw-foot">
-            <button v-if="order.type === 'in' && printIds.length" class="btn btn-ghost"
-              title="跳转标签打印，并预选本单物料" @click="goPrint">
+            <button v-if="order.type === 'in' && printIds.length" class="btn btn-ghost" title="跳转标签打印，并预选本单物料"
+              @click="goPrint">
               <Printer :size="14" style="display: inline-flex; flex-shrink: 0" /> 标签打印
             </button>
             <button class="btn btn-danger" @click="emit('void')">
@@ -302,8 +311,13 @@ function fmtTime(t: string | null) {
   text-overflow: ellipsis;
 }
 
-.stat b.in { color: #34DABF; }
-.stat b.out { color: #FF6B6B; }
+.stat b.in {
+  color: #34DABF;
+}
+
+.stat b.out {
+  color: #FF6B6B;
+}
 
 .stat b.loc {
   font-size: var(--fs-md);
@@ -427,6 +441,11 @@ function fmtTime(t: string | null) {
 
 .info small.void-note {
   color: var(--c-danger);
+}
+
+.info-header {
+  display: flex;
+  gap: 6px;
 }
 
 .q {
