@@ -213,7 +213,7 @@ async function addItems(text: string) {
     toast.error(skipped ? `未识别到有效立创物料编号（应为 C+数字，如 C50313803）${badTip}` : '没有解析出有效物料编号(pc)')
     return
   }
-  if (added) toast.success(added > 1 ? `已添加 ${added} 条物料` : '已添加 1 条物料')
+  // if (added) toast.success(added > 1 ? `已添加 ${added} 条物料` : '已添加 1 条物料')
   if (skipped) toast.warning(`已跳过 ${skipped} 条非立创码${badTip}`)
   rawInput.value = ''
   await resolveMatches()

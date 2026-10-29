@@ -39,6 +39,20 @@
         <X :size="26" style="display: inline-flex; flex-shrink: 0" />
       </button>
 
+      <!-- 右下角：切换摄像头（多摄像头机型才显示） -->
+      <button v-if="camList.length > 1" class="cam-switch" type="button" :class="{ on: camPickerOpen }"
+        aria-label="切换摄像头" @click="camPickerOpen = !camPickerOpen">
+        <SwitchCamera :size="20" style="display: inline-flex; flex-shrink: 0" />
+      </button>
+      <Transition name="cam-pick">
+        <div v-if="camPickerOpen && camList.length" class="cam-picker">
+          <button v-for="c in camList" :key="c.id" type="button" class="cam-opt" :class="{ on: c.id === activeCamId }"
+            @click="switchCamera(c.id)">
+            {{ camFriendly(c.label) }}
+          </button>
+        </div>
+      </Transition>
+
       <!-- 失败提示带上具体原因（权限 / 被占用 / 无摄像头…），便于照提示处理 -->
       <div v-if="failed" class="scan-fail">
         <p>{{ failMsg || '无法启动相机' }}</p>
@@ -50,7 +64,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { X, Flashlight, Check } from 'lucide-vue-next'
+import { X, Flashlight, Check, SwitchCamera } from 'lucide-vue-next'
 
 const emit = defineEmits<{
   (e: 'detected', code: string): void
@@ -75,6 +89,20 @@ const props = withDefaults(defineProps<{
 let scanner: any = null
 let resumeTimer: number | undefined
 const torchOn = ref(false)
+/** 摄像头列表（供右下角切换）与当前激活项、选择器展开态 */
+const camList = ref<Array<{ id: string; label: string }>>([])
+const activeCamId = ref('')
+const camPickerOpen = ref(false)
+/** 把 "camera2 4, facing back" 之类翻译成「后置 4」这种可读名 */
+function camFriendly(label: string): string {
+  if (!label) return '摄像头'
+  return label
+    .replace(/camera2\s+(\d+)/i, '$1')
+    .replace(/facing back/i, '后置')
+    .replace(/facing front/i, '前置')
+    .replace(/,/g, ' ')
+    .trim()
+}
 const failed = ref(false)
 const failMsg = ref('')
 /** 累计命中次数（内部自增，与业务无关，任何扫码场景都能用） */
@@ -115,18 +143,45 @@ function norm(v: number, size: number): number {
   return Math.min(1, Math.max(0, v / Math.max(1, size)))
 }
 
-/** 点击取景区：先判断设备是否通过 WebRTC 开放对焦，再决定对焦还是给诚实提示 */
-function onCamTap(e: MouseEvent) {
+/**
+ * 探测设备是否「真的」支持网页对焦：切到 manual 后读回 track 设置，看 focusMode 是否生效。
+ * 有些安卓 WebView 在 getCapabilities() 里报了 focusMode，但 applyConstraints 后被相机静默忽略，
+ * 这种「假支持」才会让点击只剩动画、不清。探测一次并缓存，避免每次点击都探测。
+ */
+let focusProbed: boolean | null = null
+async function probeFocus(): Promise<boolean> {
+  if (focusProbed !== null || !scanner) return focusProbed === true
+  const set = (c: Record<string, unknown>) => scanner!.applyVideoConstraints({ advanced: [c] })
+  try {
+    // 先只切 manual 看设置是否生效（不带距离，避免 min 限制造成误判）
+    await set({ focusMode: 'manual' })
+    let ok = (scanner!.getRunningTrackSettings?.() ?? {} as { focusMode?: string }).focusMode === 'manual'
+    if (!ok) {
+      // 退一步：带上 focusDistance:0 再试（部分设备手动对焦要求给定距离）
+      await set({ focusMode: 'manual', focusDistance: 0 }).catch(() => { })
+      ok = (scanner!.getRunningTrackSettings?.() ?? {} as { focusMode?: string }).focusMode === 'manual'
+    }
+    focusProbed = ok
+    // 还原为连续对焦（设备不支持时这步会抛错，忽略即可）
+    await set({ focusMode: 'continuous' }).catch(() => { })
+    return ok
+  } catch {
+    focusProbed = false
+    return false
+  }
+}
+
+/** 点击取景区：先探测是否真能对焦，不支持就给诚实提示（不放误导性对焦圈） */
+async function onCamTap(e: MouseEvent) {
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const caps = runningCaps()
-  const modes: string[] = caps.focusMode || []
-  if (!modes.length) {
-    // 设备不通过 WebRTC 开放对焦控制（多见于安卓 WebView）：不放误导性对焦圈，给诚实提示
-    console.warn('[scan-focus] 当前设备不支持网页对焦', caps)
+  const ok = await probeFocus()
+  if (!ok) {
     showFlash('warning', '当前设备不支持触屏对焦', 1200)
     return
   }
   showFocusRing(e.clientX, e.clientY)
+  const caps = runningCaps()
+  const modes: string[] = caps.focusMode || []
   void applyFocus(caps, modes, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)
 }
 
@@ -198,16 +253,9 @@ function cameraErrorMsg(e: unknown): string {
  * 属非安全上下文，浏览器会直接挡掉；手机浏览器用局域网 IP（http://192.168.x.x）同理。
  * 若在包内不可用，需另走原生相机（见历史实现：tauri-plugin-barcode-scanner）。
  */
-/**
- * 后置主摄：枚举摄像头，在「后置」里挑序号最小的那个。
- * 安卓 WebView 的 label 形如 "camera2 0, facing back" —— 序号越小越是主摄
- *（0 通常为主摄，1/2 多为广角、长焦等副摄）。只给 facingMode 时 WebView 常挑到广角副摄。
- * 取不到（未授权 / label 为空 / 格式不认识）就返回 undefined，退回 facingMode。
- */
 async function pickRearCameraId(Html5Qrcode: any): Promise<string | undefined> {
   try {
     const cams: Array<{ id: string; label: string }> = await Html5Qrcode.getCameras()
-    console.log(cams,'cams');
     if (!cams?.length) return undefined
     const rear = cams
       .map(c => ({
@@ -229,7 +277,7 @@ async function start() {
     const Html5Qrcode = mod.Html5Qrcode
     await nextTick()
     scanner = new Html5Qrcode('scan-reader')
-    // 用确定的后置主摄 deviceId 启动，避免 WebView 自己挑到广角/副摄
+    // 用确定性后置摄像头 deviceId 启动（取 camera2 序号最大的后置，避免 WebView 挑到广角）
     const camId = await pickRearCameraId(Html5Qrcode)
     await scanner.start(
       camId ?? { facingMode: 'environment' },
@@ -239,10 +287,51 @@ async function start() {
           const s = Math.floor(Math.min(vw, vh) * 0.8)
           return { width: s, height: s }
         },
+        aspectRatio: 1.0,
+        // 关键：高清视频配置
+        videoConstraints: {
+          facingMode: { ideal: 'environment' }, // 优先后置摄像头
+          width: { min: 720, ideal: 1920, max: 3840 }, // 理想1080P，最高支持4K
+          height: { min: 720, ideal: 1080, max: 2160 },
+          focusMode: { ideal: 'continuous' }, // 持续自动对焦
+          advanced: [{ zoom: 1.2 }] // 光学变焦，放大二维码（移动端支持度较好）
+        }
       },
       (decoded: string) => onDetected(decoded),
       () => { /* 每帧未识别，忽略 */ },
     )
+    // 填充摄像头列表供右下角切换（只列后置，避免切到前置扫不了码），并记录当前激活项
+    try {
+      const list = await Html5Qrcode.getCameras()
+      camList.value = (list ?? []).filter(c => /back|rear|environment|后置|背面/i.test(c.label || ''))
+      if (camId) {
+        activeCamId.value = camId
+      } else {
+        const s = scanner.getRunningTrackSettings?.() as { deviceId?: string } | undefined
+        activeCamId.value = s?.deviceId ?? camList.value[0]?.id ?? ''
+      }
+    } catch { /* 取不到列表就不显示切换按钮 */ }
+  } catch (e) {
+    fail(cameraErrorMsg(e))
+  }
+}
+
+/** 切换摄像头：停掉当前流，用新 deviceId 重启（html5-qrcode 重启标准做法） */
+async function switchCamera(id: string) {
+  camPickerOpen.value = false
+  if (!scanner || id === activeCamId.value) return
+  try {
+    await scanner.stop()
+    await scanner.clear()
+    await scanner.start(id, {
+      fps: 10,
+      qrbox: (vw: number, vh: number) => {
+        const s = Math.floor(Math.min(vw, vh) * 0.8)
+        return { width: s, height: s }
+      },
+    }, (decoded: string) => onDetected(decoded), () => { /* 每帧未识别，忽略 */ })
+    activeCamId.value = id
+    focusProbed = null // 不同相机对焦能力可能不同，重置探测缓存
   } catch (e) {
     fail(cameraErrorMsg(e))
   }
@@ -280,6 +369,10 @@ async function stop() {
   clearTimeout(resumeFocusTimer)
   try { if (scanner) { await scanner.stop(); await scanner.clear() } } catch { /* */ }
   scanner = null
+  focusProbed = null
+  camList.value = []
+  activeCamId.value = ''
+  camPickerOpen.value = false
 }
 
 function close() {
@@ -327,9 +420,20 @@ onBeforeUnmount(stop)
 }
 
 @keyframes focus-pulse {
-  0% { transform: scale(1.5); opacity: 0; }
-  35% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(0.88); opacity: 0; }
+  0% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+
+  35% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(0.88);
+    opacity: 0;
+  }
 }
 
 /* 取景遮罩用库自带的（#qr-shaded-region，跟着 qrbox 走，命中时角标会变绿），
@@ -426,6 +530,91 @@ onBeforeUnmount(stop)
 .scan-close:active {
   transform: translateX(-50%) scale(0.92);
   background: rgba(0, 0, 0, 0.6);
+}
+
+/* 右下角：切换摄像头 */
+.cam-switch {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 20px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  z-index: 3;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.cam-switch.on,
+.cam-switch:active {
+  background: rgba(0, 0, 0, 0.6);
+  transform: scale(0.92);
+}
+
+/* 摄像头列表：锚在右下角按钮上方弹出 */
+.cam-picker {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 20px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 78px);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(20, 20, 22, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  max-width: 60vw;
+}
+
+.cam-opt {
+  flex-shrink: 0;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cam-opt.on {
+  background: var(--c-primary);
+  color: #fff;
+}
+
+.cam-opt:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.cam-opt.on:active {
+  background: var(--c-primary);
+  opacity: 0.9;
+}
+
+.cam-pick-enter-active,
+.cam-pick-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.cam-pick-enter-from,
+.cam-pick-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
 }
 
 /* 命中即时反馈：贴取景框居中的绿勾胶囊，短暂停顿后淡出 */
