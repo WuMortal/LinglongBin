@@ -2,15 +2,16 @@
   <section class="tab po-wrap">
     <!-- 顶部工具条 -->
     <div class="po-bar">
-      <button class="btn btn-primary po-btn" @click="openCreate">
-        <Plus :size="14" style="display: inline-flex; flex-shrink: 0" />新建待采单
-      </button>
+
       <Segmented v-model="poStatus" :options="[
         { value: 'all', label: '全部' },
         { value: 'pending', label: '采购中' },
         { value: 'done', label: '已完成' },
       ]" />
       <div class="po-bar-right">
+        <button class="btn btn-primary po-btn" @click="openCreate">
+          <Plus :size="14" style="display: inline-flex; flex-shrink: 0" />新建待采单
+        </button>
         <span class="stat"><span class="dot warn" />采购中 {{ pendingOrders }}</span>
         <span class="stat ok"><span class="dot" />已完成 {{ doneOrders }}</span>
       </div>
@@ -49,7 +50,8 @@
         <div class="ops">
           <button v-if="row.status !== 'done'" class="btn btn-ghost mini ok" title="入库并结束本单"
             @click.stop="completeOrder(row)">完成采购</button>
-          <button class="btn btn-ghost mini" @click.stop="openPo(row)">{{ row.status === 'done' ? '查看' : '编辑' }}</button>
+          <button class="btn btn-ghost mini" @click.stop="openPo(row)">{{ row.status === 'done' ? '查看' : '编辑'
+          }}</button>
           <button v-if="row.status !== 'done'" class="btn btn-ghost mini danger" @click.stop="deletePo(row)">删除</button>
         </div>
       </template>
@@ -58,8 +60,8 @@
     <EmptyState v-else-if="!poLoading" :icon="ClipboardList" title="暂无待采单"
       description="点「新建待采单」创建；导入 BOM 时勾选缺料行也会自动生成" />
 
-    <Pager v-if="poTotal > 0" :page="poPage" :page-size="poPageSize" :total="poTotal"
-      @change="onPoPage" @update:page-size="onPoSize" />
+    <Pager v-if="poTotal > 0" :page="poPage" :page-size="poPageSize" :total="poTotal" @change="onPoPage"
+      @update:page-size="onPoSize" />
 
     <!-- 新建 / 编辑 / 详情：同一个抽屉 -->
     <Teleport to="body">
@@ -79,8 +81,7 @@
                 <span class="pd-label">采购基本信息</span>
                 <div class="pd-field">
                   <label>名称<span class="req">*</span></label>
-                  <input v-model="form.name" :class="{ bad: nameErr }" :disabled="readonly"
-                    placeholder="待采单名称（必填）" />
+                  <input v-model="form.name" :class="{ bad: nameErr }" :disabled="readonly" placeholder="待采单名称（必填）" />
                 </div>
                 <div class="pd-field">
                   <label>采购原因</label>
@@ -111,9 +112,8 @@
                   <tbody>
                     <tr v-for="(r, i) in rows" :key="r.key" :class="{ 'is-bad': !!errMsg(r) }">
                       <td class="c-item">
-                        <button v-if="!readonly" class="pick-btn"
-                          :class="{ empty: !r.material_id, bad: !!itemErr(r) }" :title="itemErr(r)"
-                          @click="pickRow(r)">
+                        <button v-if="!readonly" class="pick-btn" :class="{ empty: !r.material_id, bad: !!itemErr(r) }"
+                          :title="itemErr(r)" @click="pickRow(r)">
                           <Search v-if="!r.material_id" :size="13" style="display: inline-flex; flex-shrink: 0" />
                           <span class="pick-txt">{{ r.material_id ? r.name : '选择商品' }}</span>
                         </button>

@@ -256,7 +256,12 @@ const tree = computed<CategoryNode[]>(() => {
   // 没有任何分类配置、或存在「默认格式」时，全部分类都可选
   if (!usableCatIds.value.size || hasDefaultCfg.value) return all
   return all
-    .map(n => ({ ...n, children: n.children.filter(c => usableCatIds.value.has(c.cat.id)) }))
+    .map(n => {
+      // 大类本身配了格式 → 整棵保留（子类没有自己的配置时会回落到大类/默认格式）；
+      // 只按子类 id 过滤的话，给大类配格式会让该大类整棵消失，树直接空掉。
+      if (usableCatIds.value.has(n.cat.id)) return n
+      return { ...n, children: n.children.filter(c => usableCatIds.value.has(c.cat.id)) }
+    })
     .filter(n => n.children.length)
 })
 
@@ -606,14 +611,30 @@ function zoomBy(d: number) {
 }
 function resetFit() { zoomMode.value = 'fit' }
 
+/**
+ * 单项加载容错：失败时只降级这一项，返回兜底空值。
+ * 直接用 Promise.all + 解构赋值的话，任一请求抛错会导致整体赋值不执行，
+ * 结果是「模板 / 物料 / 分类三者一起变空」——分类凭空消失。
+ */
+async function settle<T>(p: Promise<T>, fallback: T, label: string): Promise<T> {
+  try { return await p }
+  catch (e: unknown) {
+    toast.error(`${label}加载失败：${(e as Error).message || e}`)
+    return fallback
+  }
+}
+
 async function load() {
   loading.value = true
   try {
-    ;[templates.value, allMaterials.value, categories.value] = await Promise.all([
-      listLabelTemplates(),
-      listMaterials({}),
-      listCategories(),
+    const [t, m, c] = await Promise.all([
+      settle(listLabelTemplates(), [] as LabelTemplate[], '标签模板'),
+      settle(listMaterials({}), [] as MaterialRow[], '物料'),
+      settle(listCategories(), [] as Category[], '分类'),
     ])
+    templates.value = t
+    allMaterials.value = m
+    categories.value = c
     if (!tplId.value && templates.value.length) tplId.value = templates.value[0].id
     // 从出入库单跳转而来：?ids=id1,id2 预选该单物料（过滤已删除的）
     const pre = (route.query.ids as string) || ''

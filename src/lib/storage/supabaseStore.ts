@@ -48,6 +48,25 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out
 }
 
+/**
+ * 分批执行 in.(...) 查询并合并结果。
+ * 一次性把上千个 UUID 拼进 in.(...) 会让 URL 超长，PostgREST 直接返回 400
+ * （表现为整页数据莫名变空），故统一走这里分批。
+ */
+async function inAll<T>(
+  ids: string[],
+  build: (part: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  if (!ids.length) return []
+  const out: T[] = []
+  for (const part of chunk(ids, 100)) {
+    const { data, error } = await build(part)
+    if (error) throw error
+    if (data) out.push(...((data as T[]) || []))
+  }
+  return out
+}
+
 /** 本地日期 yyyyMMdd（出入库单号用） */
 function yyyyMMdd(d = new Date()): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -192,22 +211,37 @@ export class SupabaseStore implements DataStore {
     if (error) throw error
   }
 
-  /** 批量查询 material_params 并填充到物料行 */
+  /**
+   * 批量查询 material_params 并填充到物料行。
+   */
   private async fillMaterialParams(materials: MaterialRow[]): Promise<void> {
     if (!materials.length) return
-    const ids = materials.map(m => m.id)
-    const { data, error } = await supabase
-      .from('material_params')
-      .select('material_id,param_key,value')
-      .in('material_id', ids)
-      .order('sort_order')
-    if (error) throw error
-    if (!data || !data.length) return
     const map = new Map<string, Record<string, unknown>>()
-    for (const r of data as { material_id: string; param_key: string; value: string }[]) {
-      const p = map.get(r.material_id) || {}
-      p[r.param_key] = r.value
-      map.set(r.material_id, p)
+    const PAGE = 1000        // PostgREST 单页上限
+    const parts = chunk(materials.map(m => m.id), 100)  // 每批 100 个 UUID ≈ 3.6KB URL
+    // 串行批次 + 批内并发 5：既不让 URL 超长，也不至于上千物料时慢到卡死
+    for (const group of chunk(parts, 5)) {
+      await Promise.all(group.map(async part => {
+        let from = 0
+        for (;;) {
+          const { data, error } = await supabase
+            .from('material_params')
+            .select('material_id,param_key,value')
+            .in('material_id', part)
+            .order('sort_order')
+            .order('material_id')
+            .range(from, from + PAGE - 1)
+          if (error) throw error
+          const rows = (data as { material_id: string; param_key: string; value: string }[]) || []
+          for (const r of rows) {
+            const p = map.get(r.material_id) || {}
+            p[r.param_key] = r.value
+            map.set(r.material_id, p)
+          }
+          if (rows.length < PAGE) break
+          from += PAGE
+        }
+      }))
     }
     for (const m of materials) {
       const p = map.get(m.id)
@@ -318,8 +352,11 @@ export class SupabaseStore implements DataStore {
   /** 批量软删除：单次请求完成 */
   async deleteMaterials(ids: string[]): Promise<void> {
     if (!ids.length) return
-    const { error } = await supabase.from('materials').update({ deleted_at: softDeleteAt() }).in('id', ids)
-    if (error) throw error
+    const at = softDeleteAt()
+    for (const part of chunk(ids, 100)) {
+      const { error } = await supabase.from('materials').update({ deleted_at: at }).in('id', part)
+      if (error) throw error
+    }
   }
 
   async updateMaterial(id: string, patch: Partial<MaterialRow>): Promise<MaterialRow> {
@@ -534,9 +571,11 @@ export class SupabaseStore implements DataStore {
     const ids = [...new Set(rows.map(r => r.order_id).filter((x): x is string => !!x))]
     if (ids.length) {
       try {
-        const { data: os } = await supabase
-          .from('stock_orders').select('id, order_no').in('id', ids)
-        const noMap = new Map(((os || []) as { id: string; order_no: string | null }[]).map(o => [o.id, o.order_no]))
+        const os = await inAll<{ id: string; order_no: string | null }>(
+          ids,
+          part => supabase.from('stock_orders').select('id, order_no').in('id', part),
+        )
+        const noMap = new Map(os.map(o => [o.id, o.order_no]))
         for (const r of rows) r.order_no = (r.order_id && noMap.get(r.order_id)) || null
       } catch { /* 表不存在等 → 不展示单号 */ }
     }
@@ -666,16 +705,20 @@ export class SupabaseStore implements DataStore {
         created_at: first.created_at,
       })
       if (insErr) throw insErr
-      // 只更新仍为 null 的流水：多端同时迁移时互不抢行
-      const { data: upd, error: updErr } = await supabase
-        .from('stock_log')
-        .update({ order_id: orderId })
-        .is('order_id', null)
-        .in('id', g.map(x => x.id))
-        .select('id')
-      if (updErr) throw updErr
+      // 只更新仍为 null 的流水：多端同时迁移时互不抢行（分批避免 URL 超长 400）
+      const upd: { id: string }[] = []
+      for (const part of chunk(g.map(x => x.id), 100)) {
+        const { data: u, error: e } = await supabase
+          .from('stock_log')
+          .update({ order_id: orderId })
+          .is('order_id', null)
+          .in('id', part)
+          .select('id')
+        if (e) throw e
+        upd.push(...((u as { id: string }[]) || []))
+      }
       // 整组都被其他端挂走：清理刚建的空单
-      if (!(upd || []).length) {
+      if (!upd.length) {
         await supabase.from('stock_orders').delete().eq('id', orderId)
       }
     }
@@ -713,13 +756,11 @@ export class SupabaseStore implements DataStore {
 
     // ---- 校验 + 终值计算（按物料累加，不依赖前端缓存） ----
     const ids = [...new Set(items.map(i => i.material_id))]
-    const { data: matsRaw, error: eMats } = await supabase
-      .from('materials')
-      .select('id, name, total_qty, use_qty')
-      .is('deleted_at', null)
-      .in('id', ids)
-    if (eMats) throw eMats
-    const byId = new Map((matsRaw || []).map(m => [m.id, m]))
+    const matsRaw = await inAll<{ id: string; name: string; total_qty?: number | null; use_qty?: number | null }>(
+      ids,
+      part => supabase.from('materials').select('id, name, total_qty, use_qty').is('deleted_at', null).in('id', part),
+    )
+    const byId = new Map(matsRaw.map(m => [m.id, m]))
     if (byId.size !== ids.length) throw new Error('部分物料不存在或已删除，无法出入库')
 
     // 入库累加 total_qty、出库累加 use_qty；写库走服务端原子增量，避免并发覆盖
@@ -820,14 +861,13 @@ export class SupabaseStore implements DataStore {
         .limit(1000)
       const matIds = ((ms || []) as { id: string }[]).map(m => m.id)
       if (matIds.length) {
-        const { data: ls } = await supabase
-          .from('stock_log')
-          .select('order_id')
-          .in('material_id', matIds)
-          .not('order_id', 'is', null)
-          .limit(1000)
-        const orderIds = [...new Set(((ls || []) as { order_id: string }[]).map(l => l.order_id))]
-        if (orderIds.length) parts.push(`id.in.(${orderIds.join(',')})`)
+        const ls = await inAll<{ order_id: string }>(
+          matIds,
+          part => supabase.from('stock_log').select('order_id').in('material_id', part).not('order_id', 'is', null),
+        )
+        const orderIds = [...new Set(ls.map(l => l.order_id))]
+        // 单据 id 同样受 URL 长度限制：只取前 200 个（≈7KB）参与 or 条件
+        if (orderIds.length) parts.push(`id.in.(${orderIds.slice(0, 200).join(',')})`)
       }
       orParts.push(parts.join(','))
     }
@@ -961,11 +1001,12 @@ export class SupabaseStore implements DataStore {
     const list = (takes as StockTake[]) || []
     if (!list.length) return list
     const ids = list.map(t => t.id)
-    const { data: items, error: e2 } = await supabase
-      .from('stocktake_items').select('take_id, diff').in('take_id', ids)
-    if (e2) throw e2
+    const items = await inAll<{ take_id: string; diff: number }>(
+      ids,
+      part => supabase.from('stocktake_items').select('take_id, diff').in('take_id', part),
+    )
     const byTake = new Map<string, { items: number; diff: number }>()
-    for (const it of (items as { take_id: string; diff: number }[]) || []) {
+    for (const it of items) {
       const m = byTake.get(it.take_id) || { items: 0, diff: 0 }
       m.items++
       if (it.diff !== 0) m.diff++
@@ -1024,7 +1065,7 @@ export class SupabaseStore implements DataStore {
   async listBomItems(projectId: string): Promise<BomItem[]> {
     const { data, error } = await supabase
       .from('bom_items')
-      .select('*, materials(name, model, brand, package, qty, image_path, alternates, categories(name))')
+      .select('*, materials(name, model, brand, package, part_no, qty, image_path, alternates, categories(name))')
       .eq('project_id', projectId)
     if (error) throw error
     return (data as BomItem[]) || []
@@ -1034,6 +1075,11 @@ export class SupabaseStore implements DataStore {
     const { data, error } = await supabase.from('bom_items').update(patch).eq('id', id).select().single()
     if (error) throw error
     return data as BomItem
+  }
+
+  async deleteBomItem(id: string): Promise<void> {
+    const { error } = await supabase.from('bom_items').delete().eq('id', id)
+    if (error) throw error
   }
 
   async createBomPickRecord(project_id: string, sets: number, note: string | null): Promise<BomPickRecord> {
@@ -1183,13 +1229,10 @@ export class SupabaseStore implements DataStore {
     if (!ids.length) return []
     // 必须取全部列：打印/预览要用 category_id 选分类块、用 part_no（商品编码）、
     // price、location 取值，缺列会让分类配置全部回落到默认格式。与 SQLite 的 c.* 对齐。
-    const { data, error } = await supabase
-      .from('materials')
-      .select('*')
-      .is('deleted_at', null)
-      .in('id', ids)
-    if (error) throw error
-    const materials = (data as unknown as MaterialRow[]) || []
+    const materials = await inAll<MaterialRow>(
+      ids,
+      part => supabase.from('materials').select('*').is('deleted_at', null).in('id', part),
+    )
     await this.fillMaterialParams(materials)
     return materials
   }
@@ -1251,12 +1294,13 @@ export class SupabaseStore implements DataStore {
     if (error) throw error
     const list = (mats as Record<string, unknown>[]) || []
     const ids = list.map(m => m.id as string)
-    const { data: logs } = await supabase
-      .from('stock_log').select('material_id, created_at').in('material_id', ids)
+    const logs = await inAll<{ material_id: string; created_at: string }>(
+      ids,
+      part => supabase.from('stock_log').select('material_id, created_at').in('material_id', part),
+    )
     const lastByMat = new Map<string, string>()
-    for (const l of (logs as Record<string, unknown>[]) || []) {
-      const mid = l.material_id as string
-      if (!lastByMat.has(mid)) lastByMat.set(mid, l.created_at as string)
+    for (const l of logs) {
+      if (!lastByMat.has(l.material_id)) lastByMat.set(l.material_id, l.created_at)
     }
     const now = Date.now()
     const out: StagnantRow[] = []

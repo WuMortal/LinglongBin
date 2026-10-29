@@ -6,8 +6,11 @@
         <p>导入立创 EDA / 报价单 BOM，自动匹配库存、校验缺料、一键领料出库</p>
       </div>
       <div class="head-actions">
-        <button class="btn btn-primary" @click="wizardOpen = true">
-          <Plus :size="16" style="display: inline-flex; flex-shrink: 0" />导入 BOM
+        <button class="btn btn-primary" @click="openCreateBom">
+          <Plus :size="16" style="display: inline-flex; flex-shrink: 0" />新建 BOM
+        </button>
+        <button class="btn btn-ghost" @click="wizardOpen = true">
+          <FileText :size="16" style="display: inline-flex; flex-shrink: 0" />导入 BOM
         </button>
       </div>
     </header>
@@ -92,6 +95,9 @@
                   </button>
                 </div>
                 <div class="dh-actions">
+                  <button class="btn btn-ghost" @click="openEditBom">
+                    <ArrowUpFromLine :size="16" style="display: inline-flex; flex-shrink: 0" />编辑明细
+                  </button>
                   <button class="btn btn-primary" :disabled="issuing" @click="openPickDialog">
                     <ArrowUpFromLine :size="16" style="display: inline-flex; flex-shrink: 0" />
                     <span v-if="issuing" class="spinner-sm" />{{ issuing ? '领料中…' : '领料出库' }}
@@ -114,8 +120,23 @@
                     <X :size="12" style="display: inline-flex; flex-shrink: 0" />未匹配
                   </span>
                 </template>
+                <template #cell-category="{ row }">
+                  <!-- 小类即物料所属分类名；未匹配 / 无分类时留空占位 -->
+                  <span class="dt-sub" :title="row.materials?.categories?.name || ''">
+                    {{ row.materials?.categories?.name || '—' }}
+                  </span>
+                </template>
+                <template #cell-brand="{ row }">
+                  <span class="dt-sub" :title="row.materials?.brand || ''">{{ row.materials?.brand || '—' }}</span>
+                </template>
+                <template #cell-part_no="{ row }">
+                  <span class="mono dt-sub" :title="row.materials?.part_no || ''">{{ row.materials?.part_no || '—'
+                    }}</span>
+                </template>
                 <template #cell-qty="{ row }">
-                  <span class="qty-cell">{{ row.qty }}</span>
+                  <!-- 需求数量超过物料库存 → 标红（已匹配才可比；未匹配标灰） -->
+                  <span class="qty-cell" :class="isMatched(row) ? (isShort(row) ? 'bad' : 'ok') : 'dim'">{{ row.qty
+                    }}</span>
                 </template>
                 <template #cell-stock="{ row }">
                   <span v-if="!row.materials" class="qty-cell dim">—</span>
@@ -155,8 +176,7 @@
           <div class="modal-body">
             <div class="pick-sets">
               <span class="pick-label">套数</span>
-              <input v-model.number="pickSets" type="number" min="1" class="pick-input"
-                @keyup.enter="onConfirmPick" />
+              <input v-model.number="pickSets" type="number" min="1" class="pick-input" @keyup.enter="onConfirmPick" />
               <span class="pick-unit">套</span>
               <span class="pick-sum">
                 共 {{ pickRows.length }} 项 · 合计出库 {{ pickTotalNeed }} 件
@@ -235,17 +255,107 @@
 
     <!-- ===== 新建 BOM（多步骤导入，导入态全部内聚在组件内） ===== -->
     <BomImport v-model="wizardOpen" @saved="loadProjects" />
+
+    <!-- ===== 空白 BOM：新建 / 编辑明细（逐行选物料，数量超库存实时标红） ===== -->
+    <Teleport to="body">
+      <Transition name="bm-fade">
+        <div v-if="bmOpen" class="bm-mask" @click.self="closeBomDrawer">
+          <aside class="bm-drawer">
+            <header class="bm-head">
+              <h3>{{ bmMode === 'create' ? '新建 BOM' : '编辑明细' }}</h3>
+              <button class="bm-close" title="关闭" @click="closeBomDrawer">
+                <X :size="16" style="display: inline-flex; flex-shrink: 0" />
+              </button>
+            </header>
+
+            <div class="bm-body">
+              <!-- BOM 基本信息 -->
+              <div class="bm-section">
+                <span class="bm-label">BOM 基本信息</span>
+                <div class="bm-field">
+                  <label>名称<span class="req">*</span></label>
+                  <input v-model="bmName" :disabled="bmMode === 'edit'" placeholder="如：主控板 V2" maxlength="60" />
+                </div>
+              </div>
+
+              <!-- BOM 明细 -->
+              <div class="bm-section">
+                <div class="bm-sec-head">
+                  <span class="bm-label">BOM 明细</span>
+                  <button class="btn btn-ghost mini" @click="addBomRow">
+                    <Plus :size="13" style="display: inline-flex; flex-shrink: 0" />添加物料
+                  </button>
+                </div>
+
+                <table v-if="bmRows.length" class="bm-table">
+                  <thead>
+                    <tr>
+                      <th class="c-item">物料</th>
+                      <th class="c-qty">数量</th>
+                      <th class="c-stock">库存</th>
+                      <th class="c-ops"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="r in bmRows" :key="r.key" :class="{ 'is-bad': rowShort(r) }">
+                      <td class="c-item">
+                        <button class="pick-btn" :class="{ empty: !r.material }" :title="r.material?.name || ''"
+                          @click="pickRowMaterial(r)">
+                          <Search v-if="!r.material" :size="13" style="display: inline-flex; flex-shrink: 0" />
+                          <span class="pick-txt">{{ r.material ? r.material.name : '选择物料' }}</span>
+                        </button>
+                        <small v-if="r.material?.model" class="row-sub mono">{{ r.material.model }}</small>
+                      </td>
+                      <td class="c-qty">
+                        <input v-model.number="r.qty" type="number" min="1" step="1" class="qty-in"
+                          :class="{ bad: rowShort(r) }" :title="rowShort(r) ? '数量超出库存' : ''" />
+                      </td>
+                      <td class="c-stock">
+                        <span class="bm-stock" :class="{ bad: rowShort(r) }">
+                          {{ r.material ? r.material.qty : '—' }}
+                        </span>
+                      </td>
+                      <td class="c-ops">
+                        <button class="btn btn-icon mini" title="移除" @click="removeBomRow(r)">
+                          <Trash2 :size="13" style="display: inline-flex; flex-shrink: 0" />
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p v-else class="bm-empty">还没有明细，点「添加物料」加入 BOM 需要的物料</p>
+                <p v-if="bmErr" class="bm-err">{{ bmErr }}</p>
+              </div>
+            </div>
+
+            <footer class="bm-foot">
+              <span class="bm-sum">共 {{ bmValidCount }} 项 · 合计 {{ bmTotalQty }} 件</span>
+              <button class="btn btn-ghost" :disabled="bmSaving" @click="closeBomDrawer">取消</button>
+              <button class="btn btn-primary" :disabled="bmSaving" @click="saveBom">
+                <span v-if="bmSaving" class="spinner-sm" />{{ bmSaving ? '保存中…' : '保存' }}
+              </button>
+            </footer>
+          </aside>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ===== 编辑明细时给行挑物料（复用同一个绑定弹窗） ===== -->
+    <MaterialBindDialog :model-value="!!pickerDraft" :keyword="pickerDraft?.material?.model || ''"
+      :desc="pickerDraft ? `为第 ${pickerDraftIdx + 1} 行挑选或新建物料` : ''" allow-new :categories="categories"
+      @update:model-value="pickerDraft = $event ? pickerDraft : null" @select="onDraftPicked" />
   </section>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import {
-  Plus, ChevronRight, List, FileText, ArrowUpFromLine, Trash2, Check, X, History,
+  Plus, ChevronRight, List, FileText, ArrowUpFromLine, Trash2, Check, X, History, Search,
 } from 'lucide-vue-next'
 import {
-  listBomProjects, listBomItems, deleteBomProject, stockInOrder, updateBomItem,
+  listBomProjects, listBomItems, deleteBomProject, stockInOrder, updateBomItem, deleteBomItem,
   createMaterial, createBomPickRecord, listBomPickRecords, listCategories,
+  createBomProject, createBomItems,
 } from '../lib/db'
 import type {
   BomProject, BomItem, BomPickRecord, MaterialRow, MaterialDraft, Category, MaterialFormResult,
@@ -397,6 +507,8 @@ const editMaterial = ref<MaterialRow | null>(null)
 const formLcsc = ref<LcscComponent | null>(null)
 const formLcscPrice = ref<number | null>(null)
 const pendingBindRow = ref<BomItem | null>(null)
+/** 立创建料后回填绑定的目标（编辑明细抽屉里的草稿行） */
+const pendingBindDraft = ref<BmRow | null>(null)
 
 // ===== 领料记录 =====
 const recordsOpen = ref(false)
@@ -428,6 +540,175 @@ function openProject(p: ProjWithStats) {
 
 function closeDrawer() {
   curProjectId.value = null
+}
+
+// ===== 空白 BOM：新建 / 编辑明细（参照待采单抽屉：内存编辑 → 保存时落库） =====
+/** 草稿行：先在内存里编辑，点保存才落库 */
+interface BmRow {
+  key: string
+  /** 明细 id（编辑模式下的已有行）；null = 新增行 */
+  id: string | null
+  material: MaterialRow | null
+  qty: number
+}
+
+const bmOpen = ref(false)
+const bmMode = ref<'create' | 'edit'>('create')
+const bmName = ref('')
+const bmRows = ref<BmRow[]>([])
+const bmSaving = ref(false)
+const bmErr = ref('')
+/** 打开时的已有明细，保存时用于求差集（删除被移除的行） */
+const bmOriginal = ref<BomItem[]>([])
+
+let bmSeq = 0
+function bmBlank(): BmRow { return { key: `bm${++bmSeq}`, id: null, material: null, qty: 1 } }
+
+/** 需求数量 > 物料库存（仅已匹配可比） */
+function isShort(i: BomItem): boolean { return isMatched(i) && (i.materials?.qty ?? 0) < i.qty }
+/** 草稿行：数量超过所选物料库存 → 标红 */
+function rowShort(r: BmRow): boolean { return !!r.material && r.qty > 0 && r.material.qty < r.qty }
+
+const bmValidCount = computed(() => bmRows.value.filter(r => r.material && r.qty > 0).length)
+const bmTotalQty = computed(() =>
+  bmRows.value.reduce((s, r) => s + (r.material && r.qty > 0 ? r.qty : 0), 0))
+
+function openCreateBom() {
+  bmMode.value = 'create'
+  bmName.value = `BOM ${new Date().toLocaleDateString('zh-CN')}`
+  bmRows.value = [bmBlank()]
+  bmOriginal.value = []
+  bmErr.value = ''
+  bmOpen.value = true
+}
+
+async function openEditBom() {
+  const proj = curProject.value
+  if (!proj) return
+  bmMode.value = 'edit'
+  bmName.value = proj.name
+  // 编辑态下名称不可改（没有改项目名的接口），改名需另建项目
+  bmRows.value = (proj.items.length ? proj.items : await listBomItems(proj.id)).map(i => ({
+    key: `bm${++bmSeq}`,
+    id: i.id,
+    // 悬空引用（物料已删）视为未绑定，避免显示一个查不到的物料
+    material: isMatched(i) ? (i.materials as MaterialRow) : null,
+    qty: i.qty,
+  }))
+  if (!bmRows.value.length) bmRows.value = [bmBlank()]
+  bmOriginal.value = proj.items
+  bmErr.value = ''
+  bmOpen.value = true
+}
+
+function closeBomDrawer() {
+  if (bmSaving.value) return
+  bmOpen.value = false
+}
+function addBomRow() { bmRows.value.push(bmBlank()); bmErr.value = '' }
+function removeBomRow(r: BmRow) {
+  // 至少保留一行，删完自动留一个空行
+  if (bmRows.value.length <= 1) { bmRows.value = [bmBlank()] }
+  else { bmRows.value = bmRows.value.filter(x => x.key !== r.key) }
+  bmErr.value = ''
+}
+
+/** 行上选物料：复用同一个绑定弹窗（自身库 / 新建 / 立创） */
+const pickerDraft = ref<BmRow | null>(null)
+const pickerDraftIdx = computed(() => bmRows.value.findIndex(r => r.key === pickerDraft.value?.key))
+
+function pickRowMaterial(r: BmRow) {
+  void ensureCategories()
+  pickerDraft.value = r
+}
+
+async function onDraftPicked(
+  p: { kind: 'material'; item: MaterialRow }
+    | { kind: 'lcsc'; item: unknown }
+    | { kind: 'draft'; draft: MaterialDraft },
+) {
+  const r = pickerDraft.value
+  if (!r) return
+  pickerDraft.value = null
+  try {
+    if (p.kind === 'material') {
+      r.material = p.item
+    } else if (p.kind === 'draft') {
+      r.material = await createMaterial(p.draft as Partial<MaterialRow>)
+    } else {
+      // 立创：拉详情后交给「新增物料」表单确认建料，保存时回填绑定到该草稿行
+      const hit = p.item as LcscHit
+      const detail = await lcscLookup(hit.part_no)
+      pendingBindDraft.value = r
+      formLcsc.value = detail
+      formLcscPrice.value = hit.price ?? null
+      editMaterial.value = null
+      editOpen.value = true
+    }
+    bmErr.value = ''
+  } catch (e: unknown) {
+    toast.error('绑定失败：' + ((e as Error).message || e))
+  }
+}
+
+/** 保存：create 模式先建项目；然后按差集 新建 / 更新 / 删除 明细 */
+async function saveBom() {
+  if (bmSaving.value) return
+  bmErr.value = ''
+  if (!bmName.value.trim()) { bmErr.value = '请填写 BOM 名称'; return }
+  const valid = bmRows.value.filter(r => r.material && r.qty > 0)
+  if (!valid.length) { bmErr.value = '至少一行要选择物料且数量大于 0'; return }
+
+  bmSaving.value = true
+  try {
+    let projId: string
+    if (bmMode.value === 'create') {
+      const p = await createBomProject(bmName.value.trim())
+      projId = p.id
+    } else {
+      const cur = curProject.value
+      if (!cur) throw new Error('项目已不存在')
+      projId = cur.id
+    }
+
+    // 1) 删除被移除的行（仅编辑模式：原明细 id 不在当前行里）
+    const keepIds = new Set(bmRows.value.map(r => r.id).filter(Boolean) as string[])
+    for (const i of bmOriginal.value) {
+      if (i.id && !keepIds.has(i.id)) await deleteBomItem(i.id)
+    }
+    // 2) 更新已有行（改了物料 / 数量才发请求）
+    for (const r of bmRows.value) {
+      if (!r.id) continue
+      const before = bmOriginal.value.find(i => i.id === r.id)
+      if (!before) continue
+      const patch: Partial<BomItem> = {}
+      const mid = r.material?.id ?? null
+      if ((before.material_id ?? null) !== mid) { patch.material_id = mid; patch.matched = !!mid }
+      if (before.qty !== r.qty) patch.qty = r.qty
+      if (Object.keys(patch).length) await updateBomItem(r.id, patch)
+    }
+    // 3) 新建本轮新增的行
+    const news = bmRows.value.filter(r => !r.id && r.material && r.qty > 0)
+    if (news.length) {
+      await createBomItems(projId, news.map(r => ({
+        material_id: r.material!.id, qty: r.qty, raw: null, matched: true,
+      })))
+    }
+
+    // 刷新整表：卡片统计与抽屉列表共用同一份数据
+    await loadProjects()
+    if (bmMode.value === 'create') {
+      // 新建后直接打开新项目，方便继续补充
+      const created = projects.value.find(p => p.id === projId)
+      if (created) curProjectId.value = created.id
+    }
+    bmOpen.value = false
+    toast.success(bmMode.value === 'create' ? '已创建 BOM 项目' : '明细已保存')
+  } catch (e: unknown) {
+    toast.error('保存失败：' + ((e as Error).message || e))
+  } finally {
+    bmSaving.value = false
+  }
 }
 
 async function confirmDelete() {
@@ -571,6 +852,15 @@ function openEditMaterial(it: BomItem) {
 }
 
 async function onMaterialSaved(res: MaterialFormResult) {
+  // 立创选品后新建的物料：回填绑定到「编辑明细」抽屉里的草稿行
+  if (pendingBindDraft.value && res.material) {
+    pendingBindDraft.value.material = res.material
+    pendingBindDraft.value = null
+    formLcsc.value = null
+    formLcscPrice.value = null
+    toast.success(`已新建并绑定「${res.material.name}」`)
+    return
+  }
   // 立创选品后新建的物料：回填绑定到目标 BOM 行
   if (pendingBindRow.value && res.material) {
     const it = pendingBindRow.value
@@ -610,6 +900,9 @@ async function openRecords(p: ProjWithStats) {
 const detailCols: DtColumn[] = [
   { key: 'raw', label: '原始行', minWidth: '120px', maxWidth: '200px', cls: 'dt-raw' },
   { key: 'matched', label: '匹配物料', minWidth: '110px', maxWidth: '150px' },
+  { key: 'category', label: '小类', minWidth: '70px', maxWidth: '110px' },
+  { key: 'brand', label: '品牌', minWidth: '60px', maxWidth: '100px' },
+  { key: 'part_no', label: '商品编号', minWidth: '90px', maxWidth: '140px', cls: 'mono' },
   { key: 'qty', label: '数量', align: 'right', width: '40px' },
   { key: 'stock', label: '当前库存', align: 'right', width: '40px' },
   { key: 'status', label: '状态', width: '155px' },
@@ -1059,6 +1352,320 @@ onMounted(loadProjects)
   padding: 16px 18px 24px;
 }
 
+/* ===== 空白 BOM：新建 / 编辑明细 =====
+   布局与视觉令牌抄自采购单抽屉（StockPurchase.vue 的 .po-mask / .pd-*），
+   两处必须保持一致：遮罩、标题、分节表单、明细表、底部操作栏。 */
+
+/* z-index 必须低于「选择物料」弹窗（200），否则抽屉会盖住二级弹窗 */
+.bm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 不透明实体面：--c-surface 是半透明玻璃，直接用作抽屉底会透出背后列表 */
+.bm-drawer {
+  width: min(620px, 100vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-elevated);
+  border-left: 1px solid var(--c-border);
+  box-shadow: var(--shadow-lg);
+}
+
+.bm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
+
+.bm-head h3 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.bm-close {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--motion);
+}
+
+.bm-close:hover {
+  background: var(--c-surface-hover);
+  color: var(--c-text);
+}
+
+.bm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.bm-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bm-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.bm-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.bm-field label {
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+
+.bm-field label .req {
+  margin-left: 3px;
+  color: var(--c-danger);
+}
+
+.bm-field input,
+.bm-field textarea {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: var(--fs-sm);
+  background: var(--c-glass);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  color: var(--c-text);
+  font-family: inherit;
+  resize: vertical;
+}
+
+.bm-field input:focus,
+.bm-field textarea:focus {
+  outline: none;
+  border-color: var(--c-primary);
+  background: var(--c-surface);
+  box-shadow: 0 0 0 3px var(--c-primary-glow);
+}
+
+.bm-field input:disabled,
+.bm-field textarea:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+/* 明细表（表头沿用 DataTable 的玻璃质感 + 吸顶） */
+.bm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.bm-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--c-border-hairline);
+  background: var(--c-glass-strong);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.bm-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--c-border-hairline);
+  vertical-align: middle;
+}
+
+/* 数量超出库存：整行淡红底，与采购单校验反馈一致 */
+.bm-table tr.is-bad td {
+  background: color-mix(in srgb, var(--c-danger) 8%, transparent);
+}
+
+.c-item {
+  min-width: 140px;
+}
+
+.c-qty {
+  width: 70px;
+}
+
+.c-stock {
+  width: 50px;
+  text-align: right;
+}
+
+.c-ops {
+  width: 34px;
+}
+
+/* 行内「选择物料」按钮 */
+.pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: var(--ctrl-h-sm);
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  background: var(--c-glass);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r-sm);
+  color: var(--c-text);
+  cursor: pointer;
+  flex-direction: row;
+}
+
+.pick-btn.empty {
+  color: var(--c-text-3);
+}
+
+.pick-btn:hover {
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+}
+
+.pick-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-sub {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+
+.qty-in {
+  width: 100%;
+  height: var(--ctrl-h-sm);
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  text-align: right;
+  background: var(--c-glass);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  color: var(--c-text);
+}
+
+.qty-in:focus {
+  outline: none;
+  border-color: var(--c-primary);
+  background: var(--c-surface);
+  box-shadow: 0 0 0 3px var(--c-primary-glow);
+}
+
+/* 录入数量超出库存 → 数字与边框标红 */
+.qty-in.bad {
+  border-color: var(--c-danger);
+  color: var(--c-danger);
+  font-weight: 700;
+}
+
+/* 数量超出库存 → 库存标红，与详情页一致 */
+.bm-stock {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.bm-stock.bad {
+  color: var(--c-danger);
+}
+
+.bm-empty {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r-md);
+}
+
+.bm-err {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-danger);
+}
+
+.bm-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--c-border-hairline);
+  flex-shrink: 0;
+}
+
+.bm-sum {
+  margin-right: auto;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+
+/* 抽屉动画（与 .drawer-* 同一组时长曲线） */
+.bm-fade-enter-active,
+.bm-fade-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.bm-fade-enter-from,
+.bm-fade-leave-to {
+  opacity: 0;
+}
+
+.bm-fade-enter-active .bm-drawer,
+.bm-fade-leave-active .bm-drawer {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.bm-fade-enter-from .bm-drawer,
+.bm-fade-leave-to .bm-drawer {
+  transform: translateX(40px);
+}
+
 /* 统计条 + 操作按钮同一行：两端对齐 */
 .dh-bar {
   display: flex;
@@ -1124,6 +1731,18 @@ onMounted(loadProjects)
   gap: 4px;
 }
 
+/* 纯图标小按钮：覆盖全局 .btn-icon 的固定宽度，适配明细行网格 */
+.btn-icon.mini {
+  width: 26px;
+  min-width: 26px;
+  padding: 0;
+}
+
+.btn-icon.mini.danger:hover {
+  color: var(--c-danger);
+  border-color: var(--c-danger);
+}
+
 .ops {
   display: flex;
   gap: 4px;
@@ -1139,6 +1758,15 @@ onMounted(loadProjects)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 小类 / 品牌 / 商品编号：次要信息，单行截断 */
+:deep(.dt-sub) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-2);
 }
 
 /* ===== 领料出库弹框 ===== */
@@ -1260,7 +1888,7 @@ onMounted(loadProjects)
 /* 移动端（/m/bom 的标题由 SubPage 的 NavBar 提供）：
    页头文案与 NavBar 重复，隐藏标题与副标题，只保留「导入 BOM」等操作并右对齐 */
 @media (max-width: 820px) {
-  .head > div:first-child {
+  .head>div:first-child {
     display: none;
   }
 

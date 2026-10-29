@@ -703,6 +703,7 @@ interface BomItemDbRow {
   comp_brand?: string | null; comp_package?: string | null
   comp_qty?: number; comp_image_path?: string | null
   comp_alternates?: string | null; comp_category_name?: string | null
+  comp_part_no?: string | null
 }
 
 /** 待采明细 join materials 后的行结构 */
@@ -773,7 +774,7 @@ function mapBomItem(r: Record<string, unknown>): BomItem {
       model: row.comp_model ?? null,
       brand: row.comp_brand ?? null,
       package: row.comp_package ?? null,
-      part_no: null,
+      part_no: row.comp_part_no ?? null,
       threshold: 0,
       params: {},
       // comp_qty 已是「可用库存」（SQL 里算好的 total_qty - use_qty），此处只作展示快照
@@ -1846,6 +1847,7 @@ export class SqliteStore implements DataStore {
       `select bi.*, c.id as comp_id, c.name as comp_name, c.model as comp_model,
               c.brand as comp_brand, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty,
               c.image_path as comp_image_path, c.alternates as comp_alternates,
+              c.part_no as comp_part_no,
               cat.name as comp_category_name
        from bom_items bi
        left join materials c on c.id = bi.material_id and c.deleted_at is null
@@ -1862,6 +1864,7 @@ export class SqliteStore implements DataStore {
       `select bi.*, c.id as comp_id, c.name as comp_name, c.model as comp_model,
               c.brand as comp_brand, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty,
               c.image_path as comp_image_path, c.alternates as comp_alternates,
+              c.part_no as comp_part_no,
               cat.name as comp_category_name
        from bom_items bi
        left join materials c on c.id = bi.material_id and c.deleted_at is null
@@ -1888,6 +1891,7 @@ export class SqliteStore implements DataStore {
       `select bi.*, c.id as comp_id, c.name as comp_name, c.model as comp_model,
               c.brand as comp_brand, c.package as comp_package, (coalesce(c.total_qty, 0) - coalesce(c.use_qty, 0)) as comp_qty,
               c.image_path as comp_image_path, c.alternates as comp_alternates,
+              c.part_no as comp_part_no,
               cat.name as comp_category_name
        from bom_items bi
        left join materials c on c.id = bi.material_id and c.deleted_at is null
@@ -1897,6 +1901,11 @@ export class SqliteStore implements DataStore {
     )
     if (!rows.length) throw new Error('BOM 项不存在')
     return mapBomItem(rows[0])
+  }
+
+  async deleteBomItem(id: string): Promise<void> {
+    const db = await this.ensure()
+    await db.execute('delete from bom_items where id = ?', [id])
   }
 
   async createBomPickRecord(project_id: string, sets: number, note: string | null): Promise<BomPickRecord> {

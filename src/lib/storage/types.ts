@@ -203,6 +203,8 @@ export interface DataStore {
   createBomItems(project_id: string, items: Partial<BomItem>[]): Promise<BomItem[]>
   listBomItems(projectId: string): Promise<BomItem[]>
   updateBomItem(id: string, patch: Partial<BomItem>): Promise<BomItem>
+  /** 删除 BOM 明细行（编辑抽屉里移除行时用；bom_items 无软删列，物理删除） */
+  deleteBomItem(id: string): Promise<void>
   /** 新增一条领料记录（一次领料 = 一条，含套数） */
   createBomPickRecord(project_id: string, sets: number, note: string | null): Promise<BomPickRecord>
   /** 列出某 BOM 项目的全部领料记录（按时间倒序） */

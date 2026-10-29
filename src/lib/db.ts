@@ -585,6 +585,7 @@ export const deleteBomProject = (id: string): Promise<void> => s.deleteBomProjec
 export const createBomItems = (project_id: string, items: Partial<BomItem>[]): Promise<BomItem[]> => s.createBomItems(project_id, items)
 export const listBomItems = (projectId: string): Promise<BomItem[]> => s.listBomItems(projectId)
 export const updateBomItem = (id: string, patch: Partial<BomItem>): Promise<BomItem> => s.updateBomItem(id, patch)
+export const deleteBomItem = (id: string): Promise<void> => s.deleteBomItem(id)
 export const createBomPickRecord = (project_id: string, sets: number, note: string | null): Promise<BomPickRecord> => s.createBomPickRecord(project_id, sets, note)
 export const listBomPickRecords = (projectId: string): Promise<BomPickRecord[]> => s.listBomPickRecords(projectId)
 

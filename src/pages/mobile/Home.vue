@@ -73,7 +73,7 @@
           <span class="e-ico blue">
             <List :size="17" style="display: inline-flex; flex-shrink: 0" />
           </span>
-          <span class="e-name">BOM 项目</span>
+          <span class="e-name">BOM</span>
         </button>
       </nav>
     </section>
