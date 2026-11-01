@@ -161,7 +161,8 @@
               @click="copyField(row.name, '名称')">{{ row.name || '—' }}</span>
           </template>
           <template #cell-qty="{ row }">
-            <span class="qty-cell">{{ row.qty }}</span>
+            <span class="qty-cell" :class="{ over: isStockOverride(row) }"
+              :title="stockQtyTitle(row)">{{ effStockQty(row) }}</span>
           </template>
           <template #cell-price="{ row }">
             <span v-if="row.price != null" class="price-cell">{{ fmtPrice(row.price) }}</span>
@@ -869,7 +870,7 @@ const filteredImpRows = computed(() => {
 const impCols: DtColumn[] = [
   { key: 'model', label: '型号', width: '100px' },
   { key: 'name', label: '名称', width: '110px' },
-  { key: 'qty', label: '数量', align: 'center', width: '40px' },
+  { key: 'qty', label: '数量', align: 'center', width: '46px' },
   { key: 'price', label: '单价', align: 'right', width: '70px' },
   { key: 'amount', label: '金额', align: 'right', width: '80px' },
   { key: 'supplier', label: '供应商', width: '100px' },
@@ -881,6 +882,28 @@ const impCols: DtColumn[] = [
 /** 单价展示：整数不带小数，其余保留两位 */
 function fmtPrice(v: number): string {
   return '¥' + (Number.isInteger(v) ? v.toString() : v.toFixed(2))
+}
+
+/**
+ * 「数量」列显示的是「实际将入账的数量」：
+ * - 新建物料以表单填的「初始库存」为准（默认等于订单数量，可改）；
+ * - 其余（已匹配 / 待创建未改初始库存）按订单数量累加入库。
+ * 与 doImport 里 stockQty 的取值保持一致，列表所见即入库所得。
+ */
+function effStockQty(r: ImpRow): number {
+  return r.pending && r.pending.qty > 0 ? r.pending.qty : r.qty
+}
+/** 初始库存是否覆盖了订单数量（用于高亮提示） */
+function isStockOverride(r: ImpRow): boolean {
+  const p = r.pending
+  return !!(p && p.qty > 0 && p.qty !== r.qty)
+}
+function stockQtyTitle(r: ImpRow): string {
+  const p = r.pending
+  if (p && p.qty > 0 && p.qty !== r.qty) {
+    return `新建物料初始库存 ${p.qty}（订单数量 ${r.qty}，已按初始库存入库）`
+  }
+  return `订单数量 ${r.qty}`
 }
 
 function goMatch() {
@@ -1752,6 +1775,11 @@ const expandCache = new Map<string, StockLog[]>()
 .qty-cell {
   font-weight: 700;
   font-size: var(--fs-md);
+}
+
+/* 数量被「新建物料初始库存」覆盖时高亮，悬浮可见原始订单数量 */
+.qty-cell.over {
+  color: var(--c-primary);
 }
 
 /* 型号下方的商品编号 / 商家编码（次要信息） */
