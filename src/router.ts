@@ -49,6 +49,12 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('./pages/tools/LabelPrint.vue'),
     meta: { title: '标签打印', hidden: true, activeMenu: '/tools' },
   },
+  {
+    path: '/tools/free-labels',
+    name: 'tools-free-labels',
+    component: () => import('./pages/tools/FreeLabels.vue'),
+    meta: { title: '随心标签', hidden: true, activeMenu: '/tools' },
+  },
   { path: '/bom', name: 'bom', component: () => import('./pages/BOM.vue'), meta: { title: 'BOM', icon: 'list' } },
   { path: '/stats', name: 'stats', component: () => import('./pages/Stats.vue'), meta: { title: '统计看板', icon: 'chart' } },
   { path: '/categories', name: 'categories', component: () => import('./pages/Categories.vue'), meta: { title: '分类管理', icon: 'folder', hidden: true } },

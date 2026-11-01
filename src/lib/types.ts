@@ -413,3 +413,48 @@ export interface LabelTemplate {
   created_at: string
   deleted_at: string | null
 }
+
+/**
+ * 随心标签的纸张 / 排版参数。
+ * 与 LabelSheetLayout 的区别：没有独立的「贴纸」层，标签直接排整张纸上；
+ * 每页 列×行 由纸张与标签尺寸自动算出。
+ */
+export interface FreeLabelLayout {
+  paper: 'A4' | 'A5' | 'LETTER' | 'CUSTOM'
+  paper_w: number
+  paper_h: number
+  /** 单个标签尺寸（mm） */
+  label_w: number
+  label_h: number
+  /** 每页排几个标签（自动算，不手工填） */
+  cols: number
+  rows: number
+  /** 四周留白与标签间距（mm） */
+  pad: number
+  gap_w: number
+  gap_h: number
+  /** 相对居中位置的偏移（mm），用于抵消打印机走纸偏差 */
+  off_x: number
+  off_y: number
+  /** 比例校正 = 100 ÷ 实测基准条长度 */
+  scale_fix: number
+  /** 打印辅助线（裁切用） */
+  guides: boolean
+  /** 标签文字字号（pt） */
+  font_pt: number
+  /** 每页格数变化时：keep = 内容重排（可自动增页）；trim = 保持页数（丢弃超出内容） */
+  reflow: 'keep' | 'trim'
+  /** 空格子的序号提示 */
+  ph_mode: 'hover' | 'always' | 'none'
+  /** 打印时在最前面加印一张校准页 */
+  calib: boolean
+  /** 屏幕预览缩放（不参与打印） */
+  zoom: number
+}
+
+/** 随心标签的全部状态：每页每格的文本 + 排版参数 */
+export interface FreeLabelState {
+  /** 每页的格子文本，长度 = cols × rows */
+  pages: string[][]
+  layout: FreeLabelLayout
+}

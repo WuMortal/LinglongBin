@@ -66,6 +66,23 @@
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { X, Flashlight, Check, SwitchCamera } from 'lucide-vue-next'
 
+const cameraConfig = {
+  fps: 10,
+  qrbox: (vw: number, vh: number) => {
+    const s = Math.floor(Math.min(vw, vh) * 0.8)
+    return { width: s, height: s }
+  },
+  aspectRatio: 1.0,
+  // 关键：高清视频配置
+  videoConstraints: {
+    facingMode: { ideal: 'environment' }, // 优先后置摄像头
+    width: { min: 720, ideal: 1920, max: 3840 }, // 理想1080P，最高支持4K
+    height: { min: 720, ideal: 1080, max: 2160 },
+    focusMode: { ideal: 'continuous' }, // 持续自动对焦
+    // advanced: [{ zoom: 1.2 }] // 光学变焦，放大二维码（移动端支持度较好）
+  }
+};
+
 const emit = defineEmits<{
   (e: 'detected', code: string): void
   (e: 'close'): void
@@ -281,22 +298,7 @@ async function start() {
     const camId = await pickRearCameraId(Html5Qrcode)
     await scanner.start(
       camId ?? { facingMode: 'environment' },
-      {
-        fps: 10,
-        qrbox: (vw: number, vh: number) => {
-          const s = Math.floor(Math.min(vw, vh) * 0.8)
-          return { width: s, height: s }
-        },
-        aspectRatio: 1.0,
-        // 关键：高清视频配置
-        videoConstraints: {
-          facingMode: { ideal: 'environment' }, // 优先后置摄像头
-          width: { min: 720, ideal: 1920, max: 3840 }, // 理想1080P，最高支持4K
-          height: { min: 720, ideal: 1080, max: 2160 },
-          focusMode: { ideal: 'continuous' }, // 持续自动对焦
-          advanced: [{ zoom: 1.2 }] // 光学变焦，放大二维码（移动端支持度较好）
-        }
-      },
+      cameraConfig,
       (decoded: string) => onDetected(decoded),
       () => { /* 每帧未识别，忽略 */ },
     )
@@ -323,13 +325,7 @@ async function switchCamera(id: string) {
   try {
     await scanner.stop()
     await scanner.clear()
-    await scanner.start(id, {
-      fps: 10,
-      qrbox: (vw: number, vh: number) => {
-        const s = Math.floor(Math.min(vw, vh) * 0.8)
-        return { width: s, height: s }
-      },
-    }, (decoded: string) => onDetected(decoded), () => { /* 每帧未识别，忽略 */ })
+    await scanner.start(id, cameraConfig, (decoded: string) => onDetected(decoded), () => { /* 每帧未识别，忽略 */ })
     activeCamId.value = id
     focusProbed = null // 不同相机对焦能力可能不同，重置探测缓存
   } catch (e) {

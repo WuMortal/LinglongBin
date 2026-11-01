@@ -24,7 +24,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ChevronRight, LayoutTemplate, Printer } from 'lucide-vue-next'
+import { ChevronRight, LayoutTemplate, Printer, StickyNote } from 'lucide-vue-next'
 
 const router = useRouter()
 
@@ -41,6 +41,12 @@ const modules = [
     label: '标签模板',
     desc: '配置标签纸尺寸、字段布局与打印排版',
     icon: LayoutTemplate,
+  },
+  {
+    path: '/tools/free-labels',
+    label: '随心标签',
+    desc: '自由编写每张贴纸的文字，自定义纸张排版后打印',
+    icon: StickyNote,
   },
 ]
 

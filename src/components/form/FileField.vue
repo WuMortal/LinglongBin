@@ -123,10 +123,64 @@ function clear() {
   error.value = ''
   emit('update:modelValue', null)
 }
+
+/* ===== 剪贴板粘贴上传 ===== */
+
+/** 剪贴板图片常常没有文件名（截图），补一个，保证存储层能据此推出扩展名 */
+function namedFile(f: File): File {
+  if (f.name && f.name.includes('.')) return f
+  const ext = (f.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '') || 'png'
+  return new File([f], `粘贴图片.${ext}`, { type: f.type })
+}
+
+/** 是否收下这个文件：图片模式只认 image/*，文件模式按 accept 过滤，无 accept 则全收 */
+function acceptFile(f: File): boolean {
+  if (props.image) return f.type.startsWith('image/')
+  const a = acceptVal.value.trim()
+  if (!a || a === '*/*') return true
+  return a.split(',').map(s => s.trim().toLowerCase()).some(t =>
+    t.endsWith('/*')
+      ? f.type.startsWith(t.slice(0, -1))
+      : t === f.type || (t.startsWith('.') && f.name.toLowerCase().endsWith(t)),
+  )
+}
+
+/** 从剪贴板里挑出可用的文件：没有就返回 null，让浏览器走默认粘贴行为 */
+function pickPasted(e: ClipboardEvent): File | null {
+  const dt = e.clipboardData
+  if (!dt) return null
+  // 优先 files（截图 / 复制图片都有），再退回 items 逐个取
+  const hit = Array.from(dt.files ?? []).find(acceptFile)
+  if (hit) return namedFile(hit)
+  for (const it of Array.from(dt.items ?? [])) {
+    if (it.kind !== 'file') continue
+    const f = it.getAsFile()
+    if (f && acceptFile(f)) return namedFile(f)
+  }
+  return null
+}
+
+/**
+ * 粘贴上传。关键是「只有真的存在文件时才接管」——
+ * 在线地址框里粘贴链接是纯文本，必须放行给浏览器，否则会把本来能贴的 URL 吃掉。
+ */
+async function onPaste(e: ClipboardEvent) {
+  if (busy.value) return
+  const f = pickPasted(e)
+  if (!f) return
+  e.preventDefault()
+  // 先切模式再清地址：反过来的话 watch(urlInput) 会在 url 模式下 emit(null)，把值擦掉
+  mode.value = 'upload'
+  urlInput.value = ''
+  file.value = f
+  await doUpload(f)
+}
 </script>
 
 <template>
-  <div class="ff">
+  <!-- tabindex：粘贴事件只派发给焦点所在的元素，图片字段做成可聚焦，
+       用户点一下整行再 Ctrl+V 即可；贴 PDF 等文件字段同理（paste 从内部控件冒泡上来） -->
+  <div class="ff" :class="{ 'ff-paste': image }" :tabindex="image ? 0 : undefined" @paste="onPaste">
     <div class="ff-bar">
       <Segmented :model-value="mode" @update:model-value="(v) => mode = v as Mode"
         :options="[
@@ -142,6 +196,7 @@ function clear() {
         </span>
         <input v-else key="url" v-model="urlInput" class="ff-url" :placeholder="placeholder" />
       </Transition>
+      <span v-if="image && mode === 'upload'" class="ff-tip">或 Ctrl+V 粘贴</span>
       <img v-if="image && previewUrl" :src="previewUrl" class="ff-thumb" alt="" title="点击放大"
         @click="showViewer = true" />
       <button v-if="clearable && hasValue" type="button" class="ff-clear" title="清除" @click="clear">
@@ -159,6 +214,26 @@ function clear() {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* 图片字段可聚焦以支持粘贴：聚焦时给整行描边，提示「现在可以 Ctrl+V」 */
+.ff-paste {
+  border-radius: var(--r-md);
+}
+
+.ff-paste:focus {
+  outline: none;
+}
+
+.ff-paste:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 3px;
+}
+
+.ff-tip {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
 }
 
 .ff-bar {
