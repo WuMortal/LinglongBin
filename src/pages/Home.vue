@@ -14,7 +14,8 @@
         </button>
         <!-- 更多菜单：批量删除 / 一键库位（均进入多选模式，选中后由批量操作条执行） -->
         <div ref="moreAnchorEl" class="more-anchor">
-          <button class="btn btn-ghost add" :class="{ on: selectMode }" @click="selectMode ? exitSelectMode() : (moreOpen = !moreOpen)">
+          <button class="btn btn-ghost add" :class="{ on: selectMode }"
+            @click="selectMode ? exitSelectMode() : (moreOpen = !moreOpen)">
             <MoreHorizontal :size="16" style="display: inline-flex; flex-shrink: 0" />{{ selectMode ? '退出批量' : '' }}
           </button>
           <div v-if="moreOpen" class="more-menu">
@@ -69,15 +70,9 @@
               <span v-if="selectedParamTags.length" class="pcnt">{{ selectedParamTags.length }}</span>
             </button>
             <div v-if="paramVisible" class="pf-pop-wrap">
-              <ParamFilterBar
-                v-if="activeCatParams.length"
-                :params="activeCatParams"
-                :model-value="paramSel"
-                :options-of="paramOptions"
-                :collapse="false"
-                @update:model-value="onParamsChange"
-                @clear="clearParams"
-              />
+              <ParamFilterBar v-if="activeCatParams.length" :params="activeCatParams" :model-value="paramSel"
+                :options-of="paramOptions" :collapse="false" @update:model-value="onParamsChange"
+                @clear="clearParams" />
               <p v-else class="pf-empty">该小类未配置参数模板</p>
             </div>
           </div>
@@ -105,7 +100,8 @@
           </button>
           <button class="sel-link" :disabled="!selectedCount" @click="clearSelection">清空选择</button>
           <span class="sel-spacer" />
-          <button v-if="selectAction === 'location'" class="btn btn-primary" :disabled="!selectedCount" @click="openBatchLoc">
+          <button v-if="selectAction === 'location'" class="btn btn-primary" :disabled="!selectedCount"
+            @click="openBatchLoc">
             <MapPin :size="14" style="display: inline-flex; flex-shrink: 0" />设置库位
           </button>
           <button v-else class="btn btn-danger" :disabled="!selectedCount" @click="removeSelected">
@@ -126,62 +122,62 @@
           <p>点击「添加物料」开始建档</p>
         </div>
 
-    <div v-else class="grid" ref="gridEl" :class="{ selecting: selectMode }" @scroll="onGridScroll">
-      <article v-for="it in items" :key="it.id" class="item" :class="{ picked: selected.has(it.id) }"
-        @click="selectMode ? toggleSelect(it.id) : openDetail(it)">
-        <div class="thumb">
-          <img v-if="imagePublicUrl(it.image_path)" :src="imagePublicUrl(it.image_path)" alt="" />
-          <div v-else class="thumb-ph">
-            <ImageIcon :size="24" style="display: inline-flex; flex-shrink: 0" />
+        <div v-else class="grid" ref="gridEl" :class="{ selecting: selectMode }" @scroll="onGridScroll">
+          <article v-for="it in items" :key="it.id" class="item" :class="{ picked: selected.has(it.id) }"
+            @click="selectMode ? toggleSelect(it.id) : openDetail(it)">
+            <div class="thumb">
+              <img v-if="imagePublicUrl(it.image_path)" :src="imagePublicUrl(it.image_path)" alt="" />
+              <div v-else class="thumb-ph">
+                <ImageIcon :size="24" style="display: inline-flex; flex-shrink: 0" />
+              </div>
+              <div class="del-wrap">
+                <button class="del edit" title="编辑" @click.stop="openEdit(it)">
+                  <Pencil :size="14" style="display: inline-flex; flex-shrink: 0" />
+                </button>
+                <button class="del" title="删除" @click.stop="remove(it)">
+                  <Trash2 :size="14" style="display: inline-flex; flex-shrink: 0" />
+                </button>
+              </div>
+              <!-- 悬浮快捷出入库 -->
+              <button class="qk" title="出入库" @click.stop="openQuick(it)">
+                <ArrowLeftRight :size="14" style="display: inline-flex; flex-shrink: 0" />
+              </button>
+              <!-- 多选模式：右上角复选框（此时编辑 / 删除 / 出入库按钮由 CSS 隐藏） -->
+              <button v-if="selectMode" class="pick" :class="{ on: selected.has(it.id) }" title="选择"
+                @click.stop="toggleSelect(it.id)">
+                <Check v-if="selected.has(it.id)" :size="13" style="display: inline-flex; flex-shrink: 0" />
+              </button>
+              <!-- 低库存角标 -->
+              <span v-if="isLow(it)" class="low-tag">低库存</span>
+            </div>
+            <div class="body">
+              <h3>
+                <span class="name">{{ it.name }}</span>
+                <span class="part-no" v-if="it.part_no">{{ it.part_no }}</span>
+              </h3>
+              <p class="meta">{{ it.brand || '—' }} · {{ it.model || '—' }}</p>
+              <p v-if="specLine(it)" class="specs" :title="specLine(it)">{{ specLine(it) }}</p>
+              <div class="tags">
+                <span class="tag" v-if="it.categories?.name">{{ it.categories.name }}</span>
+                <span class="tag" v-if="it.package">{{ it.package }}</span>
+              </div>
+              <div class="row">
+                <span class="qty" :class="{ low: isLow(it) }">×{{ it.qty }}</span>
+                <span class="row-r">
+                  <!-- 库位：图标同物料抽屉，有库位才显示，紧贴价格左侧 -->
+                  <span v-if="it.location" class="loc" :title="`库位 ${it.location}`">
+                    <MapPin :size="12" style="display: inline-flex; flex-shrink: 0" />{{ it.location }}
+                  </span>
+                  <span class="price">¥{{ formatPrice(it.price) }}</span>
+                </span>
+              </div>
+            </div>
+          </article>
+          <div v-if="hasMore" class="load-more">
+            <div v-if="loadingMore" class="spinner-sm" />
+            <span v-else class="hint-text">下拉加载更多</span>
           </div>
-          <div class="del-wrap">
-            <button class="del edit" title="编辑" @click.stop="openEdit(it)">
-              <Pencil :size="14" style="display: inline-flex; flex-shrink: 0" />
-            </button>
-            <button class="del" title="删除" @click.stop="remove(it)">
-              <Trash2 :size="14" style="display: inline-flex; flex-shrink: 0" />
-            </button>
-          </div>
-          <!-- 悬浮快捷出入库 -->
-          <button class="qk" title="出入库" @click.stop="openQuick(it)">
-            <ArrowLeftRight :size="14" style="display: inline-flex; flex-shrink: 0" />
-          </button>
-          <!-- 多选模式：右上角复选框（此时编辑 / 删除 / 出入库按钮由 CSS 隐藏） -->
-          <button v-if="selectMode" class="pick" :class="{ on: selected.has(it.id) }" title="选择"
-            @click.stop="toggleSelect(it.id)">
-            <Check v-if="selected.has(it.id)" :size="13" style="display: inline-flex; flex-shrink: 0" />
-          </button>
-          <!-- 低库存角标 -->
-          <span v-if="isLow(it)" class="low-tag">低库存</span>
-        </div>
-        <div class="body">
-          <h3>
-            <span class="name">{{ it.name }}</span>
-            <span class="part-no" v-if="it.part_no">{{ it.part_no }}</span>
-          </h3>
-          <p class="meta">{{ it.brand || '—' }} · {{ it.model || '—' }}</p>
-          <p v-if="specLine(it)" class="specs" :title="specLine(it)">{{ specLine(it) }}</p>
-          <div class="tags">
-            <span class="tag" v-if="it.categories?.name">{{ it.categories.name }}</span>
-            <span class="tag" v-if="it.package">{{ it.package }}</span>
-          </div>
-          <div class="row">
-            <span class="qty" :class="{ low: isLow(it) }">×{{ it.qty }}</span>
-            <span class="row-r">
-              <!-- 库位：图标同物料抽屉，有库位才显示，紧贴价格左侧 -->
-              <span v-if="it.location" class="loc" :title="`库位 ${it.location}`">
-                <MapPin :size="12" style="display: inline-flex; flex-shrink: 0" />{{ it.location }}
-              </span>
-              <span class="price">¥{{ formatPrice(it.price) }}</span>
-            </span>
-          </div>
-        </div>
-      </article>
-      <div v-if="hasMore" class="load-more">
-        <div v-if="loadingMore" class="spinner-sm" />
-        <span v-else class="hint-text">下拉加载更多</span>
-      </div>
-      <div v-else-if="items.length" class="load-end">没有更多了</div>
+          <div v-else-if="items.length" class="load-end">没有更多了</div>
         </div>
       </div>
     </div>
@@ -192,8 +188,8 @@
     <!-- 出入库弹窗（business/QuickStockModal：内部管理供应商 / 用途字典与表单） -->
     <QuickStockModal :material="quickMat" @done="onQuickDone" @close="quickMat = null" />
 
-    <MaterialFormDialog v-model="showAdd" :categories="categories" :material="editing"
-      :lcsc="formLcsc" :lcsc-price="formLcscPrice" @saved="onSaved" />
+    <MaterialFormDialog v-model="showAdd" :categories="categories" :material="editing" :lcsc="formLcsc"
+      :lcsc-price="formLcscPrice" @saved="onSaved" />
 
     <!-- 批量设置库位弹窗（business/BatchLocationModal：字典下拉 + 搜索新增） -->
     <BatchLocationModal :ids="batchLocIds" @applied="onBatchLocApplied" @close="batchLocIds = []" />
@@ -209,7 +205,9 @@
             <LcscPickerPanel ref="lcscPanel" v-model:selected="homeLcscSel" :footer-pick="true" @pick="onLcscPick" />
           </div>
           <div class="modal-foot">
-            <span v-if="homeLcscSel" class="foot-hint">已选 {{ homeLcscSel.part_no }}：{{ homeLcscSel.model || homeLcscSel.name }}</span>
+            <span v-if="homeLcscSel" class="foot-hint">已选 {{ homeLcscSel.part_no }}：{{ homeLcscSel.model ||
+              homeLcscSel.name
+              }}</span>
             <button class="btn btn-ghost" @click="showLcsc = false">取消</button>
             <button class="btn btn-primary" :disabled="!homeLcscSel" @click="lcscPanel?.confirmPick()">下一步</button>
           </div>
@@ -1246,6 +1244,7 @@ onBeforeUnmount(() => {
   font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
+
 .spinner-sm {
   width: 14px;
   height: 14px;
@@ -1431,6 +1430,9 @@ onBeforeUnmount(() => {
   font-weight: 400;
   color: var(--c-text-3);
   white-space: nowrap;
+  max-width: 43px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .meta {
@@ -1549,6 +1551,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
 }
+
 .lcsc-modal .modal-body {
   flex: 1;
   min-height: 0;
@@ -1556,6 +1559,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
 }
+
 .lcsc-modal .modal-body :deep(.lcsc-pane) {
   flex: 1;
   min-height: 0;
@@ -1574,5 +1578,4 @@ onBeforeUnmount(() => {
     max-height: 220px;
   }
 }
-
 </style>
