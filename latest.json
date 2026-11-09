@@ -1,23 +1,23 @@
 {
-  "version": "0.2.1",
-  "notes": "1. 修复更新问题",
-  "pub_date": "2026-10-19T07:16:41.996Z",
+  "version": "0.5.0",
+  "notes": "1. 移动端适配，仅支持安卓\r\n2. 订单导入优化\r\n3. 若干问题优化",
+  "pub_date": "2026-11-09T05:53:56.265Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWFRCZDkyOUk5ZDJ3UzE2bXlyUUJ3OVcwdllkVkxYaXY4ODR1TW9FcjhYRFJOTnJrTUhhL0dCSmhYZDRudUt4MElKR3p5RWlnalZSRGFjMUhicGNWVmd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTk4CWZpbGU6TGluZ2xvbmdCaW5fMC4yLjBfeDY0X2VuLVVTLm1zaQl2ZXJzaW9uOjAuMi4wCjhxM1JtbHptZ1EzcmdOMDc2RnlydXk4Z0xERmRuMjZ0OUhIS0hHcjNlTzg0V2FDUi8wdlBBNlZCSTk3UTdoQWtrSThhcERjNGxXY0x6STQ0cDdPeEF3PT0K",
-      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGJHTWNVaE96NEl2R2JDR1JQU3NGcWlVcURaTVZxZkt5TFJiUFY1bkt2cnZGeVQ1ZzNiQmQvOXVoUnRFeVhTUGxqdlZDRU1IMGx0akkvWE5ob0xpNVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjAzNjMxCWZpbGU6546y54+RQmluXzAuNS4wX3g2NF96aC1DTi5tc2kJdmVyc2lvbjowLjUuMAowS2RnMi9GUFFkbDE4VHVYUjlQUm5WeHZlZzBGRC8zemh4UFlDNCt3NlFjdG1SRjYrSmZjekhENDBZU1F5c1gxSXQ5cWlqbUdQUWZVSEk0a0RTbkhCQT09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.5.0/Bin_0.5.0_x64_zh-CN.msi"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWFJUdTdFWkFYRmRuU3BBWTNFRnQ0UmY3cHhVSGZDNXVMN2NwYVljNlM5aC9QTy9mWVNpb09LazFPcDN0aHVKa2l3ekYrdS96Nk5NOTJDUm8raG04MndRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTk4CWZpbGU6TGluZ2xvbmdCaW5fMC4yLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4wCnVWRkljRzZjc2Z1cDNEb2dYbHE2NkJpemtwWWlQOVRUZlNydFljT0czQUhiNnZORXpGMlpWN0daaXowQWs0S0RqWHFOL0cxM2RXaUhjOWI2V1hXUUJBPT0K",
-      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWFJ2Z05tOG8zYzZPTldlTndmMzlLcFhMajN4N25sVU9tdUY0UzI4cnJJcTFvMko3QlUyOXpneXRSbkRtcWIya1h6T2R5TGtBTER0ZFVENHVNUnk2THdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjAzNjMxCWZpbGU6546y54+RQmluXzAuNS4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjUuMApiOGYzR1NmWWh6d3hacU9OTldNMmlRYUZkY3JrSjFEU2VDS2hHdDQ2cnFvTjVEZ3RYd0hOMitxNFlLYzd4NjZPNEFmWnRhNUU0YUU0L3JIUjlabW1EZz09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.5.0/Bin_0.5.0_x64-setup.exe"
     },
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGRvQmdnZFp2TlMzbmVTeVIzdFhveWllK1RrNy8zQlNhQ2ZSYUgrRTJ6dUJLUmJDYkFzT3YxV0RBQkVRb3p3b0pvVVovdW9oclJsVVQxeUc2MVhTR2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTc1CWZpbGU6TGluZ2xvbmdCaW4uYXBwLnRhci5negl2ZXJzaW9uOjAuMi4wCmNHdXFKdXZIUTlZT1hRY1NVT2pXSHRYNmp1ak9LdGsvWnlSV0ZCNmFncDJISXdaWlJlVEY0NHdsWTRGU1U3K1JEY3BqZ0VDQ2hSd3lNbmYvc003dkRRPT0K",
-      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGVmZmRIdUJoVERHbGRFVDJZVTFYM3ZweXJHVTFKaWtxSXUxaFF3SmJVV2oyOFRIRFJReldIbG1xcDFDZ1VaWHZNL013Y21oVW9SamhFWnBrbnZXK0E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjAzMDQ5CWZpbGU6546y54+RQmluLmFwcC50YXIuZ3oJdmVyc2lvbjowLjUuMApZem1JckRiT3ZYa3VZMGx0b2Q0MzVBZTJMVGsyN2o4MEswcXdIZ25NZEUzdkJpSFBrQ0tMa0NKaC9UR3FvK1FpeEZrRTFDd09qMHMvdno3OFpOa05DZz09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.5.0/Bin_0.5.0_x64.app.tar.gz"
     },
     "darwin-x86_64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGRvQmdnZFp2TlMzbmVTeVIzdFhveWllK1RrNy8zQlNhQ2ZSYUgrRTJ6dUJLUmJDYkFzT3YxV0RBQkVRb3p3b0pvVVovdW9oclJsVVQxeUc2MVhTR2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzk0MTc1CWZpbGU6TGluZ2xvbmdCaW4uYXBwLnRhci5negl2ZXJzaW9uOjAuMi4wCmNHdXFKdXZIUTlZT1hRY1NVT2pXSHRYNmp1ak9LdGsvWnlSV0ZCNmFncDJISXdaWlJlVEY0NHdsWTRGU1U3K1JEY3BqZ0VDQ2hSd3lNbmYvc003dkRRPT0K",
-      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.2.0/LinglongBin_0.2.0_x64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSUVRWd0cwTW9FWGVmZmRIdUJoVERHbGRFVDJZVTFYM3ZweXJHVTFKaWtxSXUxaFF3SmJVV2oyOFRIRFJReldIbG1xcDFDZ1VaWHZNL013Y21oVW9SamhFWnBrbnZXK0E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MjAzMDQ5CWZpbGU6546y54+RQmluLmFwcC50YXIuZ3oJdmVyc2lvbjowLjUuMApZem1JckRiT3ZYa3VZMGx0b2Q0MzVBZTJMVGsyN2o4MEswcXdIZ25NZEUzdkJpSFBrQ0tMa0NKaC9UR3FvK1FpeEZrRTFDd09qMHMvdno3OFpOa05DZz09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/WuMortal/LinglongBin/releases/download/app-v0.5.0/Bin_0.5.0_x64.app.tar.gz"
     }
   }
 }
