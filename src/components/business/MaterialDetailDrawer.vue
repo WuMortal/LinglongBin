@@ -4,7 +4,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   X, MapPin, Tag, Layers, Package, Image as ImageIcon,
-  TriangleAlert, FileText, Hash, Boxes, Clock, User, Link2, Trash2, Info, History,
+  TriangleAlert, FileText, Hash, Boxes, Clock, User, Link2, Trash2, Info, History, Copy,
 } from 'lucide-vue-next'
 import { imagePublicUrl, getMaterial, getCategoryParams, listStockLog, openDatasheet, listMaterialFiles, deleteMaterialFile } from '../../lib/db'
 import type { MaterialRow, CategoryParam, StockLog, MaterialFile } from '../../lib/types'
@@ -12,6 +12,7 @@ import { filterFieldParams } from '../../lib/paramFields'
 import { useToast } from '../../composables/toast'
 import { confirm } from '../../composables/confirm'
 import ImageViewer from '../ImageViewer.vue'
+import { copyText } from '../../composables/clipboard'
 
 const toast = useToast()
 
@@ -177,6 +178,29 @@ async function openDs(path: string) {
 const showViewer = ref(false)
 const previewUrl = computed(() => imagePublicUrl(current.value?.image_path || '') || null)
 function openViewer() { if (previewUrl.value) showViewer.value = true }
+
+/** 分类路径「大类 / 小类」：展示与复制共用同一份文本 */
+const catPath = computed(() => {
+  const c = current.value?.categories
+  return c ? [c.parent_name, c.name].filter(Boolean).join(' / ') : ''
+})
+
+/**
+ * 通用字段复制：名称 / 基本信息 / 扩展参数共用。
+ * 「—」或空值视为无内容，不把占位符塞进剪贴板。
+ */
+async function copyField(v: unknown, label: string) {
+  const t = String(v ?? '').trim()
+  if (!t || t === '—') { toast.info(`该${label}无内容`); return }
+  const ok = await copyText(t)
+  if (ok) toast.success(`已复制${label}：${t}`)
+  else toast.error('复制失败，请手动选择文本')
+}
+
+/** 点击标题复制物料名称：常要贴到订单 / BOM，直接复制避免手选 */
+function copyName() {
+  void copyField(current.value?.name, '名称')
+}
 </script>
 
 <template>
@@ -191,9 +215,16 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
               <ImageIcon v-else :size="26" style="display: inline-flex; flex-shrink: 0" />
             </div>
             <div class="dw-title">
-              <h2>{{ current.name }}</h2>
+              <div class="dw-name-row">
+                <h2 class="dw-name" title="点击复制名称" @click="copyName">{{ current.name }}</h2>
+                <button class="dw-copy" title="复制名称" @click="copyName" type="button">
+                  <Copy :size="13" style="display: inline-flex; flex-shrink: 0" />
+                </button>
+              </div>
               <p>
-                {{ current.brand || '—' }} · {{ current.model || '—' }}
+                <span class="cp" title="点击复制品牌" @click="copyField(current.brand, '品牌')">{{ current.brand || '—' }}</span>
+                ·
+                <span class="cp" title="点击复制型号" @click="copyField(current.model, '型号')">{{ current.model || '—' }}</span>
                 <span class="cat" v-if="current.categories?.name">· {{ current.categories.name }}</span>
               </p>
             </div>
@@ -245,38 +276,37 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
             <template v-if="tab === 'info'">
               <!-- 基础属性 -->
               <section class="dw-sec">
-                <h3>基本信息</h3>
+                <h3>基本信息 <small class="dw-sec-tip">点击数值可复制</small></h3>
                 <div class="kv-grid">
                   <div class="kv">
                     <span>
                       <Hash :size="12" style="display: inline-flex; flex-shrink: 0" />商品编号
                     </span>
-                    <b>{{ current.part_no || '—' }}</b>
+                    <b class="cp" title="点击复制" @click="copyField(current.part_no, '商品编号')">{{ current.part_no || '—' }}</b>
                   </div>
                   <div class="kv">
                     <span>
                       <Boxes :size="12" style="display: inline-flex; flex-shrink: 0" />封装
                     </span>
-                    <b>{{ current.package || '—' }}</b>
+                    <b class="cp" title="点击复制" @click="copyField(current.package, '封装')">{{ current.package || '—' }}</b>
                   </div>
                   <div class="kv">
                     <span>
                       <Layers :size="12" style="display: inline-flex; flex-shrink: 0" />分类
                     </span>
-                    <b>{{ [current.categories?.parent_name, current.categories?.name].filter(Boolean).join(' / ') ||
-                      '未分类' }}</b>
+                    <b class="cp" title="点击复制" @click="copyField(catPath, '分类')">{{ catPath || '未分类' }}</b>
                   </div>
                   <div class="kv">
                     <span>
                       <Clock :size="12" style="display: inline-flex; flex-shrink: 0" />创建时间
                     </span>
-                    <b>{{ fmtTime(current.created_at) }}</b>
+                    <b class="cp" title="点击复制" @click="copyField(fmtTime(current.created_at), '创建时间')">{{ fmtTime(current.created_at) }}</b>
                   </div>
                   <div class="kv">
                     <span>
                       <User :size="12" style="display: inline-flex; flex-shrink: 0" />库存价值
                     </span>
-                    <b>¥{{ fmtPrice(current.qty * current.price) }}</b>
+                    <b class="cp" title="点击复制" @click="copyField(fmtPrice(current.qty * current.price), '库存价值')">¥{{ fmtPrice(current.qty * current.price) }}</b>
                   </div>
                   <div class="kv">
                     <span>
@@ -289,11 +319,11 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
               </section>
               <!-- 扩展参数 -->
               <section class="dw-sec" v-if="paramList.length">
-                <h3>扩展参数</h3>
+                <h3>扩展参数 <small class="dw-sec-tip">点击数值可复制</small></h3>
                 <div class="kv-grid">
                   <div class="kv" v-for="p in paramList" :key="p.key">
                     <span>{{ p.name }}</span>
-                    <b>{{ p.value }}</b>
+                    <b class="cp" title="点击复制" @click="copyField(p.value, p.name)">{{ p.value }}</b>
                   </div>
                 </div>
               </section>
@@ -429,6 +459,44 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
   text-overflow: ellipsis;
 }
 
+/* 名称 + 复制按钮一行；名称可点复制 */
+.dw-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dw-name {
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+
+.dw-name:hover {
+  color: var(--c-primary);
+}
+
+.dw-copy {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text-3);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+}
+
+.dw-copy:hover {
+  background: var(--c-glass);
+  color: var(--c-primary);
+}
+
 .dw-title p {
   margin: 4px 0 0;
   font-size: var(--fs-sm);
@@ -440,6 +508,10 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
 
 .dw-title .cat {
   color: var(--c-text-3);
+}
+
+.dw-title p .cp:hover {
+  color: var(--c-primary);
 }
 
 .dw-close {
@@ -550,6 +622,13 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
   color: var(--c-text-2);
 }
 
+.dw-sec-tip {
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
 .kv-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -580,6 +659,15 @@ function openViewer() { if (previewUrl.value) showViewer.value = true }
   font-weight: 600;
   color: var(--c-text);
   word-break: break-all;
+}
+
+/* 可复制字段：悬停变蓝给出可点反馈 */
+.cp {
+  cursor: pointer;
+}
+
+.kv b.cp:hover {
+  color: var(--c-primary);
 }
 
 .ds-link {

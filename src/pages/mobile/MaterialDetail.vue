@@ -12,8 +12,17 @@
             <span v-if="isLow" class="low-tag">低库存</span>
           </div>
           <div class="hd-main">
-            <h2>{{ m.name }}</h2>
-            <p class="sub">{{ m.brand || '—' }} · {{ m.model || '—' }}</p>
+            <div class="hd-name-row">
+              <h2 class="hd-name cp" title="点击复制名称" @click="copyName">{{ m.name }}</h2>
+              <button class="hd-copy" type="button" title="复制名称" @click="copyName">
+                <Copy :size="13" style="display: inline-flex; flex-shrink: 0" />
+              </button>
+            </div>
+            <p class="sub">
+              <span class="cp" title="点击复制品牌" @click="copyField(m.brand, '品牌')">{{ m.brand || '—' }}</span>
+              ·
+              <span class="cp mono" title="点击复制型号" @click="copyField(m.model, '型号')">{{ m.model || '—' }}</span>
+            </p>
             <div class="t-tags">
               <span class="ttag" v-if="catLine">{{ catLine }}</span>
               <span class="ttag" v-if="m.package">{{ m.package }}</span>
@@ -37,11 +46,11 @@
 
       <!-- 基本信息 -->
       <section class="sec">
-        <h3>基本信息</h3>
+        <h3>基本信息 <small class="sec-tip">点击数值可复制</small></h3>
         <div class="kv-grid">
-          <div class="kv"><span>商品编号</span><b class="mono">{{ m.part_no || '—' }}</b></div>
-          <div class="kv"><span>预警阈值</span><b>{{ effThreshold }}</b></div>
-          <div class="kv"><span>创建时间</span><b>{{ fmtTime(m.created_at) }}</b></div>
+          <div class="kv"><span>商品编号</span><b class="mono cp" title="点击复制" @click="copyField(m.part_no, '商品编号')">{{ m.part_no || '—' }}</b></div>
+          <div class="kv"><span>预警阈值</span><b class="cp" title="点击复制" @click="copyField(effThreshold, '预警阈值')">{{ effThreshold }}</b></div>
+          <div class="kv"><span>创建时间</span><b class="cp" title="点击复制" @click="copyField(fmtTime(m.created_at), '创建时间')">{{ fmtTime(m.created_at) }}</b></div>
           <div class="kv">
             <span>物料链接</span>
             <a v-if="m.link" class="link" href="#" @click.prevent="openDs(m.link!)">打开
@@ -54,10 +63,10 @@
 
       <!-- 扩展参数 -->
       <section class="sec" v-if="paramList.length">
-        <h3>扩展参数</h3>
+        <h3>扩展参数 <small class="sec-tip">点击数值可复制</small></h3>
         <div class="kv-grid">
           <div class="kv" v-for="p in paramList" :key="p.key">
-            <span>{{ p.name }}</span><b>{{ p.value }}</b>
+            <span>{{ p.name }}</span><b class="cp" title="点击复制" @click="copyField(p.value, p.name)">{{ p.value }}</b>
           </div>
         </div>
       </section>
@@ -153,7 +162,7 @@ import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   MapPin, ArrowUpRight, FileText, Pencil, Trash2,
-  ArrowDownToLine, ArrowUpFromLine,
+  ArrowDownToLine, ArrowUpFromLine, Copy,
 } from 'lucide-vue-next'
 import {
   getMaterial, getCategoryParams, listStockLog, listMaterialFiles,
@@ -168,6 +177,7 @@ import QuickStockSheet from '../../components/mobile/QuickStockSheet.vue'
 import ImageViewer from '../../components/ImageViewer.vue'
 import { useToast } from '../../composables/toast'
 import { confirm } from '../../composables/confirm'
+import { copyText } from '../../composables/clipboard'
 
 /**
  * 移动端物料详情（全屏页，电商商详式）：
@@ -272,6 +282,23 @@ async function openDs(path: string) {
 
 function openViewer() { if (previewUrl.value) showViewer.value = true }
 function openEdit() { showEdit.value = true }
+
+/**
+ * 通用字段复制：名称 / 基本信息 / 扩展参数共用。
+ * 「—」或空值视为无内容，不把占位符塞进剪贴板。
+ */
+async function copyField(v: unknown, label: string) {
+  const t = String(v ?? '').trim()
+  if (!t || t === '—') { toast.info(`该${label}无内容`); return }
+  const ok = await copyText(t)
+  if (ok) toast.success(`已复制${label}：${t}`)
+  else toast.error('复制失败，请手动选择文本')
+}
+
+/** 点击标题复制物料名称 */
+function copyName() {
+  void copyField(m.value?.name, '名称')
+}
 
 /** 返回：只读弹窗模式交给父组件关闭；否则沿用 NavBar 默认（有历史退、无历史去物料库） */
 function onNavBack() {
@@ -521,10 +548,49 @@ watch(
   overflow: hidden;
 }
 
+/* 名称 + 复制按钮一行；名称本体可点复制 */
+.hd-name-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hd-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.hd-copy {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text-3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hd-copy:active {
+  background: var(--c-glass);
+  color: var(--c-primary);
+}
+
 .sub {
   margin: 3px 0 0;
   font-size: var(--fs-sm);
   color: var(--c-text-2);
+}
+
+.sub .cp:hover,
+.sub .cp:active {
+  color: var(--c-primary);
 }
 
 .t-tags {
@@ -565,6 +631,14 @@ watch(
   font-weight: 700;
 }
 
+/* 移动端没有 hover，标题上直接写明「可复制」 */
+.sec-tip {
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
 .kv-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -588,6 +662,17 @@ watch(
   font-weight: 600;
   color: var(--c-text);
   word-break: break-all;
+}
+
+/* 可复制字段：桌面 hover 变蓝、移动端 :active 给反馈 */
+.cp {
+  cursor: pointer;
+}
+
+.kv b.cp:hover,
+.kv b.cp:active,
+.hd-name.cp:active {
+  color: var(--c-primary);
 }
 
 .mono {
